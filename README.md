@@ -22,8 +22,8 @@ Build sequence and phase-by-phase progress: [IMPLEMENTATION_PLAN.md](IMPLEMENTAT
 | 1 — Stand Up the Target | [TARGET.md](TARGET.md), [agentforge/target_adapter.py](agentforge/target_adapter.py) | ✅ |
 | 2 — Map the Attack Surface | [THREAT_MODEL.md](THREAT_MODEL.md) | ✅ |
 | 3 — Attack Suite (`./evals/`) | [evals/](evals/), [contracts/eval_case.schema.json](contracts/eval_case.schema.json), [agentforge/eval_runner.py](agentforge/eval_runner.py) | ✅ |
-| 4 — First Agent Live (Judge) | | not started |
-| 5 — Red Team Agent | | not started |
+| 4 — First Agent Live (Judge) | [agentforge/judge.py](agentforge/judge.py), [rubrics/](rubrics/), [agentforge/judge_eval.py](agentforge/judge_eval.py) | ⏳ built; live accuracy gate pending API credits |
+| 5 — Red Team Agent | [agentforge/red_team_client.py](agentforge/red_team_client.py) (provider seam) | 🚧 seam built; attack generation next |
 | 6 — Orchestrator + Regression | | not started |
 | 7 — Documentation Agent | | not started |
 | 8 — Observability, Cost, Hardening | | not started |
@@ -81,6 +81,81 @@ transcript per step, and a run-over-run history). It embeds real demo-patient
 identifiers and confirmed findings, so it is written to the gitignored
 `evals/results/` directory and kept local — an operator console, not something
 to publish. This is an early slice of the Phase 8 observability surface.
+
+## The Judge Agent (Phase 4)
+
+The first agent role: a frontier model (Opus 4.8, adaptive thinking) that
+consumes an attempt and emits a schema-valid **Verdict**
+([contracts/verdict.schema.json](contracts/verdict.schema.json)) scored against
+a **frozen, versioned rubric** per category ([rubrics/](rubrics/)). The model
+produces only the judgment fields under a strict output schema; the contract
+invariants — the escalate-to-human rule, confidence clamping, full schema
+validation — are enforced **deterministically in code**
+([agentforge/judge.py](agentforge/judge.py)), so a verdict cannot be talked out
+of its own contract. `result="fail"` always means the *target* failed to stay
+secure, never the attack.
+
+Wired into the runner so `requires_judge` cases become authoritative instead of
+`judge_pending`:
+
+```bash
+python -m evals.run --judge          # Judge scores requires_judge cases (Opus 4.8)
+python -m evals.run --judge-all      # Judge scores every case
+python -m agentforge.judge_eval      # accuracy vs the labeled ground-truth set
+```
+
+**Trust gate:** [judge/ground_truth.yaml](judge/ground_truth.yaml) holds 12
+labeled attempts (5 real transcripts from the first live run + 7 clear-cut
+cases). [agentforge/judge_eval.py](agentforge/judge_eval.py) runs the Judge over
+them and asserts ≥90% agreement before the Judge is trusted to produce
+authoritative verdicts. It is designed to correctly rule the identity-role
+transcript a **pass** — the case where the coarse Phase 3 detector
+false-positived.
+
+**Model / key config:** the Judge model is `JUDGE_MODEL` (default
+`claude-opus-4-8`). By default it authenticates with the standard
+`ANTHROPIC_API_KEY`; set **`JUDGE_ANTHROPIC_API_KEY`** to bill the platform to a
+separate Anthropic account without disturbing the `ANTHROPIC_API_KEY` a
+surrounding Claude Code session shares. No key is ever hardcoded — all keys
+resolve from the environment.
+
+> **Status:** the Judge and its wiring are complete and covered by non-live
+> tests (rubric loading, prompt building, verdict assembly, escalation rule,
+> schema validation, and the full `judge_attempt` path against a stub client).
+> The **live** accuracy gate and `--judge` runs are currently blocked by a
+> `400 — credit balance too low` on the configured Anthropic key; the SDK, key,
+> and request shape are verified working, so both run as-is once the account has
+> credits (or once `JUDGE_ANTHROPIC_API_KEY` points at a funded account).
+
+## The Red Team provider seam (Phase 5, in progress)
+
+The Red Team is the highest-volume caller and must be a **different vendor from
+the Judge** (generator ≠ judge independence) on a **cheaper open model** — the
+architecture's model tiering ([ARCHITECTURE.md](ARCHITECTURE.md) §Model tiering).
+[agentforge/red_team_client.py](agentforge/red_team_client.py) is the single seam
+for that model: one function over the OpenAI-compatible `/chat/completions` wire
+format (via `httpx`, no new SDK), so the provider is swappable by env var, never
+by code.
+
+```bash
+# Default: Groq free tier (fastest, no card, different vendor from the Anthropic Judge)
+export GROQ_API_KEY=gsk_...            # from console.groq.com
+# defaults: RED_TEAM_BASE_URL=https://api.groq.com/openai/v1  RED_TEAM_MODEL=llama-3.3-70b-versatile
+
+# Fallback if the safety-tuned default starts refusing offensive-security generation —
+# same code path, just point at an OpenRouter uncensored open-weight model:
+export RED_TEAM_BASE_URL=https://openrouter.ai/api/v1
+export RED_TEAM_API_KEY=sk-or-...
+export RED_TEAM_MODEL=<an uncensored open model on OpenRouter>
+```
+
+Config: `RED_TEAM_BASE_URL`, `RED_TEAM_MODEL`, `RED_TEAM_API_KEY` (or `GROQ_API_KEY`),
+and optional `RED_TEAM_USD_PER_1M_INPUT`/`_OUTPUT` for cost tracking on a paid
+endpoint (Groq's free tier is `$0`). The seam is fully covered by **offline** tests
+(request shape, auth header, response parsing, cost math, error paths) via
+`httpx.MockTransport` — no key or network needed — so it's ready the moment a Groq
+key is set. Attack generation (consume `AttackDirective` → produce attempts, plus
+the partial-verdict mutation loop) is the next Phase 5 step.
 
 ## Running the tests
 

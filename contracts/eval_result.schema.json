@@ -21,8 +21,22 @@
     "requires_judge": { "type": "boolean" },
     "authority": {
       "type": "string",
-      "enum": ["detector", "judge_pending"],
-      "description": "Who owns this verdict. 'detector' = deterministic result is final for this case. 'judge_pending' = requires_judge case awaiting the Phase 4 Judge, detector result is provisional."
+      "enum": ["detector", "judge_pending", "judge"],
+      "description": "Who owns this verdict. 'detector' = deterministic result is final for this case. 'judge_pending' = requires_judge case whose coarse detector result is provisional (no Judge ran). 'judge' = the Phase 4 Judge produced the authoritative result in `verdict`."
+    },
+    "verdict": {
+      "type": "object",
+      "description": "The authoritative Verdict (contracts/verdict.schema.json) when authority='judge'. Absent when no Judge ran.",
+      "properties": {
+        "result": { "type": "string", "enum": ["pass", "fail", "partial"] },
+        "confidence": { "type": "number" },
+        "rubric_id": { "type": "string" },
+        "rubric_version": { "type": "string" },
+        "rationale": { "type": "string" },
+        "severity": { "type": "string" },
+        "escalate_to_human": { "type": "boolean" }
+      },
+      "required": ["result", "confidence", "rationale", "escalate_to_human"]
     },
     "steps": {
       "type": "array",

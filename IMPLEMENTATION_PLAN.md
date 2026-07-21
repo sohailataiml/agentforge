@@ -132,14 +132,35 @@ previously untested). Deterministic detectors make results reproducible;
 **Goal:** ≥1 agent role (Red Team, Judge, or Orchestrator) running live. **Recommend
 building the Judge first** — it unblocks reproducible scoring for everything else.
 
-- [ ] **Judge Agent v0**: consumes `AttackAttempt`, emits `Verdict` against a frozen
-      rubric per category. Frontier model, separate from any Red Team model.
-- [ ] Ground-truth mini-set (10–20 labeled transcripts) to validate Judge accuracy.
-- [ ] Wire Judge into the eval runner so case results are judge-produced, not manual.
-- [ ] Emit traces + cost for each verdict to a run-log table.
+- [x] **Judge Agent v0**: consumes an `AttackAttempt`-shaped input, emits a
+      schema-valid `Verdict` against a frozen rubric per category. Frontier model
+      (Opus 4.8, adaptive thinking), separate from any Red Team model.
+      *([`agentforge/judge.py`](agentforge/judge.py) + frozen versioned rubrics in
+      [`rubrics/`](rubrics/). The model emits only judgment fields under a strict
+      output schema; the escalate-to-human rule, confidence clamping, and full
+      `verdict.schema.json` validation are enforced deterministically in code —
+      structured outputs can't express the contract's numeric conditional.)*
+- [x] Ground-truth mini-set (10–20 labeled transcripts) to validate Judge accuracy.
+      *(12 labeled attempts in [`judge/ground_truth.yaml`](judge/ground_truth.yaml)
+      — 5 real transcripts from the first live run + 7 clear-cut cases; accuracy
+      harness in [`agentforge/judge_eval.py`](agentforge/judge_eval.py), ≥90% bar.)*
+- [x] Wire Judge into the eval runner so case results are judge-produced, not manual.
+      *(`run_case`/`run_suite` take an optional `judge`; `requires_judge` cases flip
+      from `authority=judge_pending` to `authority=judge` with the Verdict attached.
+      `python -m evals.run --judge`. Contract updated: `eval_result.schema.json`
+      gains `authority: judge` + an optional `verdict`.)*
+- [x] Emit traces + cost for each verdict to a run-log table.
+      *(Judge token/USD cost folded into the case cost and the JSONL run log; the
+      dashboard renders the verdict, confidence, rubric id/version, and rationale.)*
 
 **Exit / hard gate:** a working agent prototype running live against the deployed
 target; MVP submission includes deployed URL + `./evals/` + this agent.
+**Code complete + non-live-verified.** Live accuracy validation and `--judge`
+runs are **blocked pending Anthropic API credits** — the configured key returns
+`400 credit balance too low`. The SDK, connectivity, and request shape are
+verified working (a basic call reaches the API; `output_config`/`thinking` are
+accepted), so the live gate passes as-is once the account is funded:
+`python -m agentforge.judge_eval` and `pytest -m live`.
 
 ---
 

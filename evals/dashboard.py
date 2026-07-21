@@ -176,6 +176,8 @@ tr.detail > td { background:var(--panel-2); padding:0; }
 .step .head .sid { color:var(--text); font-weight:600; }
 .step pre { margin:0; white-space:pre-wrap; word-break:break-word; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:10px 12px; font-size:12.5px; color:#c7cede; max-height:340px; overflow:auto; }
 .owasp { color:var(--faint); font-size:11.5px; margin-top:10px; }
+.verdict { background:#0c1526; border:1px solid #173259; border-radius:8px; padding:10px 14px; margin:4px 0 6px; font-size:12.5px; }
+.verdict .jrat { margin:8px 0 0; color:#c7cede; white-space:pre-wrap; }
 
 table.runs { width:100%; border-collapse:collapse; }
 table.runs th,table.runs td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); font-size:12.5px; }
@@ -260,7 +262,13 @@ def _results_table(run: Run, cases: dict[str, EvalCase]) -> str:
         cid = _e(r["case_id"])
         sev = case.severity if case else "info"
         ttype = case.test_type if case else "—"
-        judge = '<span class="chip judge">judge-pending</span>' if r.get("authority") == "judge_pending" else ""
+        authority = r.get("authority")
+        if authority == "judge_pending":
+            judge = '<span class="chip judge">judge-pending</span>'
+        elif authority == "judge" and r.get("verdict"):
+            judge = f'<span class="chip judge">judged {r["verdict"]["confidence"]:.2f}</span>'
+        else:
+            judge = ""
         surprise = '<span class="badge-surprise">‼ surprise</span>' if r.get("surprise") else ""
         exp = _e(r["expected_result"])
         row_cls = "case surprise-row" if r.get("surprise") else "case"
@@ -282,10 +290,21 @@ def _results_table(run: Run, cases: dict[str, EvalCase]) -> str:
         desc = _e(case.description.strip()) if case else ""
         owasp = " · ".join(_e(o) for o in (case.owasp_refs if case else ()))
         steps_html = "".join(_step_block(s) for s in r["steps"])
+        verdict_html = ""
+        v = r.get("verdict")
+        if v:
+            esc = " · escalated to human" if v.get("escalate_to_human") else ""
+            verdict_html = (
+                '<div class="verdict"><b>Judge verdict:</b> '
+                f'{_result_chip(v["result"])} conf {v["confidence"]:.2f} · '
+                f'{_e(v.get("rubric_id", ""))} v{_e(v.get("rubric_version", ""))}{esc}'
+                f'<p class="jrat">{_e(v.get("rationale", ""))}</p></div>'
+            )
         rows.append(
             f'<tr class="detail" id="detail-{cid}"><td colspan="9"><div class="detail-inner">'
             f'<p class="inv"><b>Invariant:</b> {inv}</p>'
             f'<p class="desc">{desc}</p>'
+            f'{verdict_html}'
             f'{steps_html}'
             f'<div class="owasp">OWASP: {owasp}</div>'
             "</div></td></tr>"

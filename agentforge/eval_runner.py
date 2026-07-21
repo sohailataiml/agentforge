@@ -15,6 +15,7 @@ Result records are shaped for contracts/eval_result.schema.json.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,12 +24,18 @@ from typing import Any
 import httpx
 
 from agentforge.eval_case import EvalCase, Step, StepResult
+from agentforge.judge import JudgeInput, Verdict
 from agentforge.target_adapter import (
     TARGET_BASE_URL,
     TARGET_TIMEOUT_S,
     TargetError,
     send_to_target,
 )
+
+# A judge is any callable that scores an attempt — agentforge.judge.judge_attempt
+# by default. Injected so the runner stays decoupled from the Anthropic SDK and
+# so tests can supply a stub.
+JudgeFn = Callable[[JudgeInput], Verdict]
 
 _RESULT_SCHEMA_VERSION = "1.0.0"
 _TRANSCRIPT_SNIPPET_CHARS = 2000  # cap stored observed_behavior so run logs stay lean
@@ -64,11 +71,14 @@ class EvalResult:
     cost: dict[str, Any]
     executed_at: str
     target_system_version: str = "unknown"
+    verdict: dict[str, Any] | None = None  # the Judge's Verdict when authority='judge'
     schema_version: str = _RESULT_SCHEMA_VERSION
 
     def to_record(self) -> dict[str, Any]:
         record = asdict(self)
         record["steps"] = [s.to_record() for s in self.steps]
+        if self.verdict is None:
+            record.pop("verdict", None)  # keep the record clean when no Judge ran
         return record
 
 
@@ -86,11 +96,12 @@ def _is_surprise(result: str, authority: str, expected_result: str) -> bool:
 
     A "surprise" is the signal the Orchestrator and regression harness care about
     most — a defense expected to hold that broke, or a confirmed finding that
-    stopped reproducing. It only counts when the deterministic detector is
-    authoritative: a run error, or a judge_pending case whose coarse detector is
-    not the final word, is never a surprise.
+    stopped reproducing. It only counts when the result is authoritative — a
+    deterministic detector ('detector') or the Judge ('judge'). A run error, or a
+    'judge_pending' case whose coarse detector is not the final word, is never a
+    surprise.
     """
-    return result != "error" and authority == "detector" and result != expected_result
+    return result != "error" and authority in ("detector", "judge") and result != expected_result
 
 
 def _roll_up(step_results: list[StepResult]) -> str:
@@ -129,20 +140,29 @@ def run_case(
     base_url: str | None = None,
     client: httpx.Client | None = None,
     target_version: str = "unknown",
+    judge: JudgeFn | None = None,
+    judge_all: bool = False,
 ) -> EvalResult:
-    """Execute one case's steps live and produce a deterministic EvalResult.
+    """Execute one case's steps live and produce an EvalResult.
 
     Steps run in order. A step whose `session` is 'reuse:<step_id>' continues
     the target conversation opened by that earlier step (this is what lets a
     later step probe whether an earlier patient's memory bled across). A
     TargetError on any step is captured as an 'error' step (and short-circuits
     the case) rather than crashing the whole suite.
+
+    If a `judge` is supplied, the Phase 4 Judge produces the authoritative
+    verdict for cases marked `requires_judge` (or every case when `judge_all`),
+    replacing the coarse detector result. Cases the Judge doesn't score keep
+    their deterministic detector result exactly as before.
     """
     owns_client = client is None
     http = client or httpx.Client(base_url=base_url or TARGET_BASE_URL, timeout=TARGET_TIMEOUT_S)
 
     step_outcomes: list[StepOutcome] = []
     session_ids: dict[str, str] = {}  # step_id -> target conversation_id
+    judge_input_turns: list[dict[str, Any]] = []  # attacker turns across all steps
+    judge_transcript_turns: list[dict[str, Any]] = []  # target turns across all steps
     total_tokens = 0
     total_usd = 0.0
 
@@ -173,6 +193,8 @@ def run_case(
             session_ids[step.step_id] = target_result.session_id
             total_tokens += int(target_result.cost.get("tokens", 0))
             total_usd += float(target_result.cost.get("usd", 0.0))
+            judge_input_turns.extend(dict(m) for m in step.input_sequence)
+            judge_transcript_turns.extend(target_result.transcript_as_dicts())
 
             transcript = _transcript_text(target_result)
             step_outcomes.append(_grade_step(step, target_result, transcript))
@@ -183,6 +205,25 @@ def run_case(
     result = _roll_up([o.result for o in step_outcomes])
     requires_judge = case.requires_judge
     authority = "judge_pending" if requires_judge else "detector"
+    verdict_record: dict[str, Any] | None = None
+
+    should_judge = judge is not None and result != "error" and (requires_judge or judge_all)
+    if should_judge:
+        verdict = judge(
+            JudgeInput(
+                attack_category=case.category,
+                invariant=case.invariant,
+                expected_safe_behavior=case.expected_safe_behavior,
+                input_sequence=judge_input_turns,
+                target_transcript=judge_transcript_turns,
+            )
+        )
+        result = verdict.result
+        authority = "judge"
+        verdict_record = verdict.verdict
+        total_tokens += int(verdict.cost.get("tokens", 0))
+        total_usd += float(verdict.cost.get("usd", 0.0))
+
     surprise = _is_surprise(result, authority, case.expected_result)
 
     return EvalResult(
@@ -197,6 +238,7 @@ def run_case(
         cost={"tokens": total_tokens, "usd": round(total_usd, 6)},
         executed_at=_now_iso(),
         target_system_version=target_version,
+        verdict=verdict_record,
     )
 
 
@@ -227,11 +269,20 @@ def run_suite(
     *,
     base_url: str | None = None,
     fetch_version: bool = True,
+    judge: JudgeFn | None = None,
+    judge_all: bool = False,
 ) -> list[EvalResult]:
-    """Run every case live over a shared connection pool; return all results."""
+    """Run every case live over a shared connection pool; return all results.
+
+    Pass `judge` to have the Phase 4 Judge finalize `requires_judge` cases (or
+    every case with `judge_all`); omit it for the deterministic-only Phase 3 run.
+    """
     with httpx.Client(base_url=base_url or TARGET_BASE_URL, timeout=TARGET_TIMEOUT_S) as http:
         version = fetch_target_version(client=http) if fetch_version else "unknown"
-        return [run_case(c, client=http, target_version=version) for c in cases]
+        return [
+            run_case(c, client=http, target_version=version, judge=judge, judge_all=judge_all)
+            for c in cases
+        ]
 
 
 def write_results_jsonl(results: list[EvalResult], out_path: str | Path) -> Path:

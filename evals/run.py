@@ -79,8 +79,11 @@ def _print_results(results: list[EvalResult]) -> None:
             flag = "  !! ERROR"
         elif r.surprise:
             flag = f"  !! SURPRISE (expected {r.expected_result})"
-        auth = "" if r.authority == "detector" else "  (judge_pending)"
-        print(f"  {r.case_id:<{width}}  {r.result:<7} ${r.cost['usd']:.4f}{auth}{flag}")
+        auth = {"detector": "", "judge": "  (judged)", "judge_pending": "  (judge_pending)"}.get(r.authority, "")
+        conf = ""
+        if r.verdict is not None:
+            conf = f" conf={r.verdict['confidence']:.2f}"
+        print(f"  {r.case_id:<{width}}  {r.result:<7} ${r.cost['usd']:.4f}{auth}{conf}{flag}")
 
     total_usd = sum(r.cost["usd"] for r in results)
     total_tokens = sum(r.cost["tokens"] for r in results)
@@ -101,6 +104,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--category", help="run only cases in this attack category")
     parser.add_argument("--base-url", help="override the target base URL")
     parser.add_argument("--out", type=Path, help="JSONL run-log path (default: evals/results/run-<ts>.jsonl)")
+    parser.add_argument("--judge", action="store_true", help="score requires_judge cases with the Phase 4 Judge (Opus 4.8)")
+    parser.add_argument("--judge-all", action="store_true", help="score EVERY case with the Judge, not just requires_judge ones")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--list", action="store_true", help="list valid cases, no network")
     mode.add_argument("--dry-run", action="store_true", help="show execution plan, no network")
@@ -126,8 +131,16 @@ def main(argv: list[str] | None = None) -> int:
         _print_plan(cases)
         return _EXIT_OK
 
+    judge_fn = None
+    if args.judge or args.judge_all:
+        from agentforge.judge import judge_attempt  # lazy: only needs the SDK/key when judging
+
+        judge_fn = judge_attempt
+        print("Judge enabled (Opus 4.8) — "
+              f"{'every case' if args.judge_all else 'requires_judge cases'} will be scored by the Judge.")
+
     print(f"running {len(cases)} case(s) live against {args.base_url or 'the deployed target'} …")
-    results = run_suite(cases, base_url=args.base_url)
+    results = run_suite(cases, base_url=args.base_url, judge=judge_fn, judge_all=args.judge_all)
     _print_results(results)
 
     out = args.out or (_RESULTS_DIR / f"run-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}.jsonl")
