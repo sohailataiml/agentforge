@@ -248,9 +248,15 @@ def _step_block(step: dict[str, Any]) -> str:
 
 
 def _results_table(run: Run, cases: dict[str, EvalCase]) -> str:
+    return results_table(run.records, cases)
+
+
+def results_table(records: list[dict[str, Any]], cases: dict[str, EvalCase]) -> str:
+    """Render the results table for a list of run records — reused by the web app
+    so the live console and the static dashboard share one renderer."""
     rows = []
     ordered = sorted(
-        run.records,
+        records,
         key=lambda r: (
             0 if r.get("surprise") else 1,
             0 if r["result"] == "fail" else 1,

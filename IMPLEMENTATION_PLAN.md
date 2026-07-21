@@ -168,15 +168,30 @@ accepted), so the live gate passes as-is once the account is funded:
 
 **Goal:** autonomous attack generation and variant escalation.
 
-- [ ] Red Team Agent on an open/local model (sandboxed, untrusted output).
-- [ ] Consumes `AttackDirective`; generates novel attacks + multi-turn sequences.
-- [ ] **Mutation loop**: on a `partial` verdict, autonomously generate N variants of
+- [x] Red Team Agent on an open/local model (sandboxed, untrusted output).
+      *(Provider-agnostic seam [`agentforge/red_team_client.py`](agentforge/red_team_client.py)
+      over the OpenAI-compatible API; default Groq free tier (`llama-3.3-70b-versatile`),
+      env-swappable to an OpenRouter uncensored model. Different vendor from the
+      Anthropic Judge; output treated as untrusted.)*
+- [x] Consumes `AttackDirective`; generates novel attacks + multi-turn sequences.
+      *([`agentforge/red_team.py`](agentforge/red_team.py) `run_directive`: generate →
+      execute via `send_to_target` → assemble a schema-valid `AttackAttempt`.
+      **Live-validated** on Groq + the deployed target for ~$0.01.)*
+- [x] **Mutation loop**: on a `partial` verdict, autonomously generate N variants of
       the parent attempt (paraphrase, encoding, role-frame, turn-splitting) and
-      re-submit — no human in the loop.
-- [ ] Egress content check so genuinely harmful generations are logged and dropped,
-      never executed against real PHI.
+      re-submit — no human in the loop. *(Implemented in `run_directive` with an
+      **injected** Judge; each variant links to the parent via `parent_attempt_id`.
+      Runs live once the Anthropic Judge has credits — the trigger is a `partial`
+      verdict.)*
+- [x] Egress content check so genuinely harmful generations are logged and dropped,
+      never executed against real PHI. *(`egress_ok`: deterministic secret-pattern
+      screen; a match drops the attempt before it reaches the target, recorded as
+      `dropped_reason`.)*
 
 **Exit:** Red Team turns one partial success into a variant family without prompting.
+**Generation + execution live-verified; the partial→mutation escalation runs live
+the moment the Judge (Anthropic) has credits** — the loop code and wiring are done
+and non-live-tested.
 
 ---
 

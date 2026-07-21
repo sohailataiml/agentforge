@@ -23,7 +23,7 @@ Build sequence and phase-by-phase progress: [IMPLEMENTATION_PLAN.md](IMPLEMENTAT
 | 2 — Map the Attack Surface | [THREAT_MODEL.md](THREAT_MODEL.md) | ✅ |
 | 3 — Attack Suite (`./evals/`) | [evals/](evals/), [contracts/eval_case.schema.json](contracts/eval_case.schema.json), [agentforge/eval_runner.py](agentforge/eval_runner.py) | ✅ |
 | 4 — First Agent Live (Judge) | [agentforge/judge.py](agentforge/judge.py), [rubrics/](rubrics/), [agentforge/judge_eval.py](agentforge/judge_eval.py) | ⏳ built; live accuracy gate pending API credits |
-| 5 — Red Team Agent | [agentforge/red_team_client.py](agentforge/red_team_client.py) (provider seam) | 🚧 seam built; attack generation next |
+| 5 — Red Team Agent | [agentforge/red_team.py](agentforge/red_team.py), [red_team_client.py](agentforge/red_team_client.py) | 🚧 agent live (generate + execute on Groq); mutation loop pending Judge credits |
 | 6 — Orchestrator + Regression | | not started |
 | 7 — Documentation Agent | | not started |
 | 8 — Observability, Cost, Hardening | | not started |
@@ -42,6 +42,33 @@ tests/                  pytest suite (live tests hit the real deployed target �
 docs/                   build-vs-configure decision record, evidence packet skeleton
 target/                 local read-only clones of the target repos (gitignored, reference only)
 ```
+
+## Web console (the demo surface)
+
+A FastAPI web app ([agentforge/webapp.py](agentforge/webapp.py)) over the whole
+platform — the thing to open in a browser. It reuses the dashboard renderer, the
+eval runner, and the Red Team agent, and exposes:
+
+- a live **results console** (summary tiles, per-category pass/fail, expandable
+  target transcripts, run history),
+- a **Run attack suite** button that attacks the live target on demand (optionally
+  with the Judge), and
+- a **Red Team** panel that generates an attack on the open model and executes it
+  against the target, showing both live.
+
+```bash
+pip install -e ".[web]"
+python -m agentforge.webapp          # -> http://127.0.0.1:8000
+```
+
+**Deploy to Render:** [render.yaml](render.yaml) is a ready blueprint (build
+`pip install -e ".[web]"`, start `uvicorn agentforge.webapp:app --host 0.0.0.0
+--port $PORT`). The demo patients are synthetic, so it is safe to host. Viewing is
+public; the **paid action buttons** (run suite / Red Team) trigger LLM calls on the
+server's keys, so they are gated behind an operator token — set **`CONSOLE_TOKEN`**
+(plus `GROQ_API_KEY` and `JUDGE_ANTHROPIC_API_KEY`) in the Render dashboard.
+Without a token gate a public console would itself be the unbounded-cost hole this
+platform hunts for.
 
 ## The attack suite (`./evals/`)
 
@@ -151,11 +178,25 @@ export RED_TEAM_MODEL=<an uncensored open model on OpenRouter>
 
 Config: `RED_TEAM_BASE_URL`, `RED_TEAM_MODEL`, `RED_TEAM_API_KEY` (or `GROQ_API_KEY`),
 and optional `RED_TEAM_USD_PER_1M_INPUT`/`_OUTPUT` for cost tracking on a paid
-endpoint (Groq's free tier is `$0`). The seam is fully covered by **offline** tests
-(request shape, auth header, response parsing, cost math, error paths) via
-`httpx.MockTransport` — no key or network needed — so it's ready the moment a Groq
-key is set. Attack generation (consume `AttackDirective` → produce attempts, plus
-the partial-verdict mutation loop) is the next Phase 5 step.
+endpoint (Groq's free tier is `$0`).
+
+**The agent** ([agentforge/red_team.py](agentforge/red_team.py)) drives one
+`AttackDirective` end to end: generate a novel attack on the open model → **egress
+screen** (drop any generation carrying a real credential — untrusted output is
+never forwarded) → execute against the live target through `send_to_target` →
+assemble a **schema-valid `AttackAttempt`** ([contracts/attack_attempt.schema.json](contracts/attack_attempt.schema.json))
+for the Judge. On a `partial` verdict it autonomously mutates the parent into a
+variant family (paraphrase / encoding / role-frame / turn-splitting), linked by
+`parent_attempt_id` — no human. The Judge is **injected** (different vendor), so
+the Red Team never scores its own work.
+
+**Live-validated** against Groq + the deployed target: the agent generated a
+prompt-injection attack, executed it live (the target held), and produced a
+schema-valid `AttackAttempt` for ~$0.01. The **mutation loop** is triggered by a
+`partial` Judge verdict, so it runs live once the Anthropic Judge has credits;
+the injected-judge design lets generation + execution run live today without it.
+Pure logic (egress screen, attack parsing, attempt assembly) is covered by
+non-live tests; the full pipeline by a `live` test that skips without a key.
 
 ## Running the tests
 

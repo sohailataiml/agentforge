@@ -1,0 +1,27 @@
+# Render blueprint for the AgentForge Console.
+#
+#   1. Push this repo to the Git remote Render is connected to.
+#   2. Render → New → Blueprint → pick this repo (reads render.yaml).
+#   3. Set the secret env vars (marked sync:false) in the Render dashboard:
+#        CONSOLE_TOKEN            required — gates the paid action buttons
+#        GROQ_API_KEY             enables live Red Team generation
+#        JUDGE_ANTHROPIC_API_KEY  enables the Judge (needs Anthropic credits)
+#
+# Viewing the console is public; running attacks / Red Team requires the token.
+# The demo patients are synthetic, so no real PHI is exposed.
+services:
+  - type: web
+    name: agentforge-console
+    runtime: python
+    plan: free
+    buildCommand: pip install -e ".[web]"
+    startCommand: uvicorn agentforge.webapp:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.8"
+      - key: CONSOLE_TOKEN
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: JUDGE_ANTHROPIC_API_KEY
+        sync: false
