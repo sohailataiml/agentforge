@@ -94,18 +94,36 @@ Phase 1's target liveness — see [TARGET.md](TARGET.md).
 
 **Goal:** `./evals/` — structured, reproducible seed cases across ≥3 categories.
 
-- [ ] Define eval case schema (one YAML/JSON file per case):
-      `category, subcategory, owasp_ref, input_sequence, expected_safe_behavior,
-      observed_behavior, result(pass|fail|partial), severity, exploitability,
-      add_to_regression(bool), boundary|invariant|regression_tag`.
-- [ ] Author ≥3 categories of seed cases (target the top-ranked from Phase 2).
-- [ ] **Every case must exercise a boundary, an invariant, or a regression risk** —
-      not a flat payload list. (e.g. max-prompt-length boundary; "Judge must never
-      approve a confirmed exploit" invariant; a previously-fixed vuln reappearing.)
-- [ ] Runner that executes each case against the live target and records results.
+- [x] Define eval case schema (one YAML file per case):
+      `category, subcategory, owasp_refs, input_sequence, expected_safe_behavior,
+      severity, exploitability, add_to_regression, test_type(boundary|invariant|
+      regression), invariant, expected_result` + a per-step deterministic
+      `detector`. Versioned as [`contracts/eval_case.schema.json`](contracts/eval_case.schema.json)
+      (and [`eval_result.schema.json`](contracts/eval_result.schema.json) for the
+      runner's output records). `observed_behavior`/`result` are produced by the
+      runner, not authored.
+- [x] Author ≥3 categories of seed cases (target the top-ranked from Phase 2).
+      *(5 cases across 4 categories under [`evals/cases/`](evals/cases/):
+      `data_exfiltration` ×2, `identity_role`, `state_corruption`,
+      `prompt_injection` — the coverage priority 1/3/5 plus one direct-injection
+      case.)*
+- [x] **Every case must exercise a boundary, an invariant, or a regression risk** —
+      not a flat payload list. *(Enforced by the schema's required `test_type` +
+      `invariant` fields and asserted in
+      [`tests/test_eval_case.py`](tests/test_eval_case.py). Cases include: the
+      confirmed auth-bypass locked as a **regression**; the PatientScopeGuard
+      cross-patient **boundary**; the trusted-context-delimiter **invariant**.)*
+- [x] Runner that executes each case against the live target and records results.
+      *([`agentforge/eval_runner.py`](agentforge/eval_runner.py) threads multi-step
+      sessions through the target seam, applies detectors, rolls step verdicts up,
+      and writes a JSONL run log; CLI in [`evals/run.py`](evals/run.py).)*
 
 **Exit / hard gate:** `./evals/` runs live against the deployed target across ≥3
-categories with reproducible results.
+categories with reproducible results. **✅ met** — first live run (2026-07-21)
+executed all 5 cases against the deployed target for $0.13, confirming 3 exploits
+including a **new** cross-patient conversation-memory bleed (THREAT_MODEL §5,
+previously untested). Deterministic detectors make results reproducible;
+`requires_judge` cases defer the final verdict to Phase 4's Judge.
 
 ---
 

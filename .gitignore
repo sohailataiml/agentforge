@@ -15,5 +15,8 @@ __pycache__/
 # Uploaded / generated artifacts
 uploads/
 
+# Eval run logs — generated per run, not part of the committed suite
+/evals/results/
+
 # Local Claude Code settings (machine-specific, not part of the deliverable)
 .claude/settings.local.json

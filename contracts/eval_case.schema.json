@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentforge.local/contracts/eval_case.schema.json",
+  "title": "EvalCase",
+  "description": "One authored, reproducible eval case (evals/cases/**/*.yaml). Each case exercises a boundary, an invariant, or a regression risk against the live target via one or more ordered steps. Not a flat payload list: the `test_type` + `invariant` fields state the security property under test, and each step's `detector` deterministically decides whether the target held or failed.",
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "case_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "description": "Unique, stable, kebab-case id. Used as the regression key, so it must never be reused for a different case."
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "prompt_injection",
+        "data_exfiltration",
+        "state_corruption",
+        "tool_misuse",
+        "dos",
+        "identity_role"
+      ],
+      "description": "Matches contracts/attack_directive.schema.json's attack_category enum 1:1."
+    },
+    "subcategory": { "type": "string", "minLength": 1 },
+    "owasp_refs": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1
+    },
+    "description": { "type": "string", "minLength": 1 },
+    "test_type": {
+      "type": "string",
+      "enum": ["boundary", "invariant", "regression"],
+      "description": "Why this case is not a flat payload: it pins a boundary condition, asserts a security invariant, or guards against a specific regression."
+    },
+    "invariant": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The security property being asserted, in one sentence (e.g. 'PHI must not be served to an unauthenticated caller')."
+    },
+    "expected_safe_behavior": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What a secure target does with this input. Read by the Phase 4 Judge; also human-readable ground truth."
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["critical", "high", "medium", "low", "info"]
+    },
+    "exploitability": {
+      "type": "string",
+      "enum": ["trivial", "low", "medium", "high"]
+    },
+    "add_to_regression": {
+      "type": "boolean",
+      "description": "If true, a confirmed exploit here is stored in the versioned exploit DB and replayed by the Phase 6 regression harness."
+    },
+    "requires_judge": {
+      "type": "boolean",
+      "default": false,
+      "description": "true when the deterministic detector is only a coarse signal and the Phase 4 Judge is authoritative for the final verdict (e.g. semantic 'did the model treat spoofed context as trusted' calls)."
+    },
+    "expected_result": {
+      "type": "string",
+      "enum": ["pass", "fail", "partial"],
+      "description": "The authoring-time expectation for a run against the current target version: 'fail' = the target is expected to be exploited (a known/confirmed finding), 'pass' = the defense is expected to hold. Lets the runner flag surprises (a should-pass case that failed, or a fixed finding that reappeared)."
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/step" }
+    }
+  },
+  "required": [
+    "schema_version",
+    "case_id",
+    "category",
+    "subcategory",
+    "owasp_refs",
+    "description",
+    "test_type",
+    "invariant",
+    "expected_safe_behavior",
+    "severity",
+    "exploitability",
+    "add_to_regression",
+    "expected_result",
+    "steps"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "step": {
+      "type": "object",
+      "description": "One send_to_target call. Steps run in list order; a later step can reuse an earlier step's target session to model multi-turn or cross-patient-session-reuse attacks.",
+      "properties": {
+        "step_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "patient_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "FHIR patient id this step is scoped to. Steps in the same case may use different patient_ids (that is the cross-patient state-corruption test)."
+        },
+        "session": {
+          "type": "string",
+          "pattern": "^(new|reuse:[a-z0-9]+(?:-[a-z0-9]+)*)$",
+          "description": "'new' starts a fresh target conversation; 'reuse:<step_id>' continues the session opened by an earlier step (used to test whether one patient's conversation memory bleeds into another's)."
+        },
+        "input_sequence": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Same shape as contracts/attack_attempt.schema.json's input_sequence, plus optional doc_type for uploaded_content turns.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "turn": { "type": "integer", "minimum": 1 },
+              "role": {
+                "type": "string",
+                "enum": ["user", "system_context", "uploaded_content"]
+              },
+              "content": { "type": "string" },
+              "doc_type": {
+                "type": "string",
+                "enum": ["lab_pdf", "intake_form"]
+              }
+            },
+            "required": ["turn", "role", "content"],
+            "additionalProperties": false
+          }
+        },
+        "detector": { "$ref": "#/$defs/detector" }
+      },
+      "required": ["step_id", "patient_id", "session", "input_sequence"],
+      "additionalProperties": false
+    },
+    "detector": {
+      "type": "object",
+      "description": "Deterministic pass/fail signal applied to this step's concatenated assistant transcript. Optional: a step with no detector only sets up state for a later step. Kept intentionally small and vetted — no arbitrary code, so runs are reproducible.",
+      "properties": {
+        "signals": {
+          "type": "string",
+          "enum": ["exploit", "safe"],
+          "description": "'exploit' = a match means the target FAILED (the exploit landed → result 'fail'). 'safe' = a match means the target HELD (result 'pass'). The opposite outcome applies on no-match."
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["contains_any", "contains_all", "regex"]
+        },
+        "patterns": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1,
+          "description": "Literal substrings for contains_any/contains_all, or a single-element list holding the pattern for regex."
+        },
+        "ignore_case": { "type": "boolean", "default": true }
+      },
+      "required": ["signals", "kind", "patterns"],
+      "additionalProperties": false
+    }
+  }
+}
