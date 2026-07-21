@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentforge.local/contracts/attack_attempt.schema.json",
+  "title": "AttackAttempt",
+  "description": "Red Team Agent -> Judge Agent. One executed attack sequence and its transcript.",
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "attempt_id": { "type": "string", "format": "uuid" },
+    "directive_id": { "type": "string", "format": "uuid" },
+    "attack_category": { "type": "string", "minLength": 1 },
+    "input_sequence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "turn": { "type": "integer", "minimum": 1 },
+          "role": { "type": "string", "enum": ["user", "system_context", "uploaded_content"] },
+          "content": { "type": "string" }
+        },
+        "required": ["turn", "role", "content"],
+        "additionalProperties": false
+      }
+    },
+    "target_transcript": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "turn": { "type": "integer", "minimum": 1 },
+          "role": { "type": "string", "enum": ["assistant", "tool_call", "tool_result"] },
+          "content": { "type": "string" }
+        },
+        "required": ["turn", "role", "content"],
+        "additionalProperties": false
+      }
+    },
+    "expected_safe_behavior": { "type": "string", "minLength": 1 },
+    "parent_attempt_id": { "type": ["string", "null"], "format": "uuid" },
+    "target_system_version": { "type": "string" },
+    "cost": {
+      "type": "object",
+      "properties": {
+        "tokens": { "type": "integer", "minimum": 0 },
+        "usd": { "type": "number", "minimum": 0 }
+      },
+      "required": ["tokens", "usd"],
+      "additionalProperties": false
+    },
+    "executed_at": { "type": "string", "format": "date-time" }
+  },
+  "required": [
+    "schema_version",
+    "attempt_id",
+    "directive_id",
+    "attack_category",
+    "input_sequence",
+    "target_transcript",
+    "expected_safe_behavior",
+    "cost"
+  ],
+  "additionalProperties": false
+}

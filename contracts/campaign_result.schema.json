@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentforge.local/contracts/campaign_result.schema.json",
+  "title": "CampaignResult",
+  "description": "Regression Harness / Judge -> Orchestrator. Rollup used to steer the next AttackDirective.",
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "directive_id": { "type": "string", "format": "uuid" },
+    "attempts_run": { "type": "integer", "minimum": 0 },
+    "confirmed_exploits": { "type": "integer", "minimum": 0 },
+    "regressions_detected": { "type": "integer", "minimum": 0 },
+    "coverage_delta": {
+      "type": "object",
+      "properties": {
+        "category": { "type": "string" },
+        "cases_added": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["category", "cases_added"],
+      "additionalProperties": false
+    },
+    "total_cost": {
+      "type": "object",
+      "properties": {
+        "tokens": { "type": "integer", "minimum": 0 },
+        "usd": { "type": "number", "minimum": 0 }
+      },
+      "required": ["tokens", "usd"],
+      "additionalProperties": false
+    },
+    "signal_yield": {
+      "type": "number",
+      "minimum": 0,
+      "description": "confirmed_exploits / total_cost.usd — used by Orchestrator's kill-switch"
+    },
+    "completed_at": { "type": "string", "format": "date-time" }
+  },
+  "required": [
+    "schema_version",
+    "directive_id",
+    "attempts_run",
+    "confirmed_exploits",
+    "regressions_detected",
+    "total_cost"
+  ],
+  "additionalProperties": false
+}

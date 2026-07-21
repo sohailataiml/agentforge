@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentforge.local/contracts/errors.schema.json",
+  "title": "AgentError",
+  "description": "Typed error envelope emitted by any agent on a known failure mode. Consumed by the Orchestrator.",
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "error_id": { "type": "string", "format": "uuid" },
+    "source_agent": {
+      "type": "string",
+      "enum": ["orchestrator", "red_team", "judge", "documentation", "harness"]
+    },
+    "related_id": {
+      "type": ["string", "null"],
+      "description": "directive_id, attempt_id, or vuln_id this error pertains to, if any"
+    },
+    "code": {
+      "type": "string",
+      "enum": [
+        "target_unreachable",
+        "budget_exceeded",
+        "judge_timeout",
+        "no_findings_in_window",
+        "regression_detected",
+        "schema_validation_failed",
+        "rate_limited",
+        "harmful_content_blocked"
+      ]
+    },
+    "message": { "type": "string", "minLength": 1 },
+    "retryable": { "type": "boolean" },
+    "occurred_at": { "type": "string", "format": "date-time" }
+  },
+  "required": [
+    "schema_version",
+    "error_id",
+    "source_agent",
+    "code",
+    "message",
+    "retryable"
+  ],
+  "additionalProperties": false
+}

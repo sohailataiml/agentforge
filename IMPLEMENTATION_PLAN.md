@@ -1,0 +1,234 @@
+# AgentForge — Implementation Plan
+
+Build sequence for the multi-agent adversarial evaluation platform, mapped to the
+Week 3 schedule and hard gates. Pairs with [ARCHITECTURE.md](./ARCHITECTURE.md).
+
+---
+
+## Guiding constraints
+
+- **Every checkpoint requires a live deployed target URL** (hard gate). Nothing is a
+  mock — the platform must attack a running Co-Pilot.
+- **MVP scope ≠ full platform.** MVP proves the foundation is trustworthy and
+  extensible: standing target, threat model, 3+ attack categories with results, and
+  ≥1 working agent role running live.
+- Build order follows data flow: **target → threat model → attacks → one agent live
+  → coordination → the rest.**
+- Prefer deterministic code for anything that must be reproducible; reserve LLM calls
+  for generation and judgment.
+
+## Schedule mapping
+
+| Checkpoint | Deadline | This plan's phases |
+|------------|----------|--------------------|
+| Architecture Defense | 2.5h after kickoff | Phase 0 (docs + decision records) |
+| MVP | Tuesday 11:59 PM | Phases 1–4 |
+| Final | Friday Noon | Phases 5–8 |
+
+---
+
+## Phase 0 — Architecture Defense (first 2.5 hours)
+
+**Goal:** defensible plan on paper + all decision records. No platform code yet.
+
+- [ ] `ARCHITECTURE.md` with ~500-word summary, named agents, roles, trust levels,
+      inter-agent diagram. *(done — this repo)*
+- [ ] Build-vs-configure decision record: evaluate Burp Suite, OWASP ZAP, Semgrep,
+      Garak, commercial red-team platforms — what each covers, where each falls short
+      for a multi-turn LLM target, why a custom agent is justified.
+- [ ] Evidence packet skeleton: agent interaction diagram, message schemas, trust
+      boundaries, known failure modes.
+- [ ] `/contracts` directory with v1 JSON Schemas for the four core messages +
+      error schemas.
+
+**Exit:** every architectural decision has a written, defensible rationale.
+
+---
+
+## Phase 1 — Stand Up the Target (MVP Stage 1)
+
+**Goal:** Clinical Co-Pilot running locally **and** deployed, testable.
+
+- [x] Pull the Week 1/2 OpenEMR Clinical Co-Pilot (or the Week 1 reference build).
+      *(cloned into `target/` — see [TARGET.md](TARGET.md))*
+- [x] Run locally; confirm chat, chart retrieval, note summarization, intake flow.
+      *(confirmed against the live deployed instance — chat + chart retrieval
+      verified with a real `/chat` call; local Docker stand-up not required,
+      see TARGET.md)*
+- [x] Deploy to a public URL (record it — required at every checkpoint).
+      *(already deployed by the Week 1/2 team — verified live, not redeployed)*
+- [x] Document every change made to reach a testable state (goes in README +
+      threat-model context). *(TARGET.md — no changes were needed)*
+- [x] Add a thin **target adapter**: a single function `send_to_target(session_id,
+      messages) -> transcript` so all agents hit the deployed URL through one seam.
+      *(`agentforge/target_adapter.py`, tested in `tests/test_target_adapter.py`)*
+
+**Exit / hard gate:** deployed target URL live; adapter returns transcripts. **✅ met.**
+
+---
+
+## Phase 2 — Map the Attack Surface (MVP Stage 2)
+
+**Goal:** `THREAT_MODEL.md` — the living document the platform exercises.
+
+- [x] ~500-word summary: key findings, highest-risk categories, coverage priority.
+- [x] For each category document: attack surface · potential impact · exploit
+      difficulty · whether an existing defense addresses it. Categories:
+  - Prompt injection (direct / indirect / multi-turn)
+  - Data exfiltration (PHI leakage, cross-patient exposure, authz bypass)
+  - State corruption (history manipulation, context poisoning)
+  - Tool misuse (unintended invocation, parameter tampering, recursion)
+  - Denial of service (token exhaustion, infinite loops, cost amplification)
+  - Identity/role exploitation (priv-esc, persona hijack, trust-boundary violation)
+- [x] Tag each surface with OWASP refs (LLM Top 10 + relevant Web Top 10).
+- [x] Rank categories by risk → this ranking seeds the Orchestrator's priority logic.
+
+**Exit / hard gate:** `THREAT_MODEL.md` committed with summary + full map. **✅ met.**
+Includes one already-confirmed-live critical finding (unauthenticated PHI
+access via the DEV password-grant fallback) discovered while verifying
+Phase 1's target liveness — see [TARGET.md](TARGET.md).
+
+---
+
+## Phase 3 — Build Initial Attack Suite (MVP Stage 3)
+
+**Goal:** `./evals/` — structured, reproducible seed cases across ≥3 categories.
+
+- [ ] Define eval case schema (one YAML/JSON file per case):
+      `category, subcategory, owasp_ref, input_sequence, expected_safe_behavior,
+      observed_behavior, result(pass|fail|partial), severity, exploitability,
+      add_to_regression(bool), boundary|invariant|regression_tag`.
+- [ ] Author ≥3 categories of seed cases (target the top-ranked from Phase 2).
+- [ ] **Every case must exercise a boundary, an invariant, or a regression risk** —
+      not a flat payload list. (e.g. max-prompt-length boundary; "Judge must never
+      approve a confirmed exploit" invariant; a previously-fixed vuln reappearing.)
+- [ ] Runner that executes each case against the live target and records results.
+
+**Exit / hard gate:** `./evals/` runs live against the deployed target across ≥3
+categories with reproducible results.
+
+---
+
+## Phase 4 — First Agent Live (MVP Stage 3, cont.)
+
+**Goal:** ≥1 agent role (Red Team, Judge, or Orchestrator) running live. **Recommend
+building the Judge first** — it unblocks reproducible scoring for everything else.
+
+- [ ] **Judge Agent v0**: consumes `AttackAttempt`, emits `Verdict` against a frozen
+      rubric per category. Frontier model, separate from any Red Team model.
+- [ ] Ground-truth mini-set (10–20 labeled transcripts) to validate Judge accuracy.
+- [ ] Wire Judge into the eval runner so case results are judge-produced, not manual.
+- [ ] Emit traces + cost for each verdict to a run-log table.
+
+**Exit / hard gate:** a working agent prototype running live against the deployed
+target; MVP submission includes deployed URL + `./evals/` + this agent.
+
+---
+
+## Phase 5 — Red Team Agent + Mutation Engine
+
+**Goal:** autonomous attack generation and variant escalation.
+
+- [ ] Red Team Agent on an open/local model (sandboxed, untrusted output).
+- [ ] Consumes `AttackDirective`; generates novel attacks + multi-turn sequences.
+- [ ] **Mutation loop**: on a `partial` verdict, autonomously generate N variants of
+      the parent attempt (paraphrase, encoding, role-frame, turn-splitting) and
+      re-submit — no human in the loop.
+- [ ] Egress content check so genuinely harmful generations are logged and dropped,
+      never executed against real PHI.
+
+**Exit:** Red Team turns one partial success into a variant family without prompting.
+
+---
+
+## Phase 6 — Orchestrator + Regression Harness
+
+**Goal:** strategy layer + deterministic replay.
+
+- [ ] **Orchestrator**: reads observability state, scores categories (coverage gaps,
+      open high-sev, regressions, spend/signal), emits `AttackDirective`, enforces
+      budgets, triggers regression runs on target change.
+- [ ] **Regression Harness** (deterministic, no LLM): stores confirmed exploits in
+      the versioned SQLite exploit DB; replays exact sequences; asserts the *violated
+      invariant*, not string equality; flags reappearing vulns + cross-category
+      regressions.
+- [ ] Spend-rate monitor + kill-switch for low-signal campaigns.
+- [ ] Cost/rate-limit handling: backoff → queue → abort, per external API.
+
+**Exit:** Orchestrator drives an autonomous loop; regression suite re-runs on change.
+
+---
+
+## Phase 7 — Documentation Agent + Trust Gates
+
+**Goal:** confirmed exploits → professional reports, with human gates.
+
+- [ ] Documentation Agent consumes confirmed `Verdict`s → `VulnReport` (schema-valid,
+      data-quality-checked: unique ID, required fields, no dup attack sequences).
+- [ ] ≥3 distinct vulnerability reports produced (final requirement).
+- [ ] **Human approval gate** before critical-severity reports publish; **no
+      autonomous remediation** to the live target.
+- [ ] Triage exercise: simulated scan report with ≥10 findings across
+      critical/high/medium/false-positive; document validate/remediate/defer/document
+      decisions per finding.
+
+**Exit:** reports a senior engineer could reproduce and fix from text alone; gates enforced.
+
+---
+
+## Phase 8 — Observability, Cost Analysis, Hardening (Final)
+
+**Goal:** the CISO-defensible finish.
+
+- [ ] Observability dashboard/queries answering: cases per category · pass-fail rate
+      by category & system version · resilience trend over time · open/in-progress/
+      resolved vulns · run cost + scaling rate · per-agent action timeline.
+- [ ] `AI_COST_ANALYSIS.md`: actual dev spend + projections at 100/1K/10K/100K runs,
+      with the architectural change required at each tier (not token×n).
+- [ ] `USERS.md`: users, workflows, use cases, justification for automation.
+- [ ] Contract tests (both sides of each boundary) + versioning + migration notes.
+- [ ] ATO-style evidence packet: architecture + data-flow diagrams, auth model,
+      dependency versions, self-scan results, eval evidence, sample postmortem.
+- [ ] Baseline perf profile (CPU/mem/latency/throughput on 100 cases + full
+      regression) + a 100-case load test identifying the bottleneck.
+- [ ] Demo video (3–5 min) showing live attacks against the target.
+- [ ] Social post tagging @GauntletAI (final only).
+
+**Exit / final gate:** full multi-agent loop running live; all submission artifacts present.
+
+---
+
+## Component ownership (build vs. inherit)
+
+| Component | Build / Inherit | Notes |
+|-----------|-----------------|-------|
+| Target Co-Pilot | Inherit (Week 1/2) | Only adapt for testability |
+| Contracts (`/contracts`) | Build | Versioned JSON Schema, the integration seam |
+| Judge Agent | Build first | Unblocks reproducible scoring |
+| Red Team Agent | Build | Open/local model |
+| Orchestrator | Build | Deterministic scoring core |
+| Documentation Agent | Build | Gated output |
+| Regression Harness | Build (deterministic) | No LLM |
+| Orchestration framework | Configure (LangGraph) | State + checkpoints + retries |
+| Observability | Configure (Langfuse) + custom metrics | Orchestrator's data substrate |
+
+## Risk register (build-time)
+
+| Risk | Mitigation |
+|------|------------|
+| Target not deployable in time | Fall back to Week 1 reference build early in Phase 1 |
+| Frontier model refuses offensive prompts | Red Team on open/local model from day one |
+| Judge unreliable → poisons everything | Ground-truth set + build Judge first, validate before scaling |
+| Cost runaway during autonomous runs | Budgets + spend-rate kill-switch before Phase 5 autonomy |
+| Non-reproducible regressions | Invariant-based assertions in deterministic harness, never string match |
+
+---
+
+## Definition of done (final)
+
+1. Deployed target URL live, platform attacking it autonomously.
+2. Five roles coordinating through versioned contracts with passing contract tests.
+3. ≥3 attack categories with reproducible eval results; regression suite re-runs on change.
+4. ≥3 professional vulnerability reports; critical severity human-gated.
+5. Observability answers all required questions; cost analysis at 4 scale tiers.
+6. Every autonomous action logged, gated, and reproducible — defensible to a hospital CISO.

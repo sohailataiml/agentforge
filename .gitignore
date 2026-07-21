@@ -1,0 +1,19 @@
+# Local read-only clones of the Week 1/2 target repos — reference only, not
+# part of this platform's own history. See TARGET.md.
+/target/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+*.egg-info/
+
+# Env / secrets
+.env
+
+# Uploaded / generated artifacts
+uploads/
+
+# Local Claude Code settings (machine-specific, not part of the deliverable)
+.claude/settings.local.json

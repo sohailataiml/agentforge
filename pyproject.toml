@@ -1,0 +1,30 @@
+[project]
+name = "agentforge"
+version = "0.1.0"
+description = "Multi-agent adversarial evaluation platform for the Clinical Co-Pilot target."
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+
+dependencies = [
+    "httpx>=0.27,<0.28",
+    "jsonschema>=4.23,<5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3,<9",
+    "ruff>=0.7,<0.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agentforge"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "live: hits the real deployed target over the network (no mocks, per platform policy)",
+]

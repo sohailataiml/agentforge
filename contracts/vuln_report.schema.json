@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentforge.local/contracts/vuln_report.schema.json",
+  "title": "VulnReport",
+  "description": "Documentation Agent -> Exploit DB. Only produced from a confirmed (result != pass) Verdict.",
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "vuln_id": { "type": "string", "pattern": "^AF-\\d{4}-\\d{4,}$" },
+    "attempt_id": { "type": "string", "format": "uuid" },
+    "severity": { "type": "string", "enum": ["critical", "high", "medium", "low"] },
+    "title": { "type": "string", "minLength": 1, "maxLength": 140 },
+    "attack_category": { "type": "string", "minLength": 1 },
+    "owasp_refs": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "clinical_impact": { "type": "string", "minLength": 1 },
+    "reproduction_steps": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "minimal_attack_sequence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "turn": { "type": "integer", "minimum": 1 },
+          "content": { "type": "string" }
+        },
+        "required": ["turn", "content"],
+        "additionalProperties": false
+      }
+    },
+    "observed_behavior": { "type": "string", "minLength": 1 },
+    "expected_behavior": { "type": "string", "minLength": 1 },
+    "recommended_remediation": { "type": "string", "minLength": 1 },
+    "status": {
+      "type": "string",
+      "enum": ["open", "in_progress", "resolved", "wont_fix"]
+    },
+    "fix_validation": {
+      "type": "object",
+      "properties": {
+        "validated": { "type": "boolean" },
+        "regression_case_id": { "type": ["string", "null"] }
+      },
+      "required": ["validated"],
+      "additionalProperties": false
+    },
+    "human_approved": { "type": "boolean" },
+    "created_at": { "type": "string", "format": "date-time" }
+  },
+  "required": [
+    "schema_version",
+    "vuln_id",
+    "attempt_id",
+    "severity",
+    "title",
+    "attack_category",
+    "owasp_refs",
+    "clinical_impact",
+    "reproduction_steps",
+    "minimal_attack_sequence",
+    "observed_behavior",
+    "expected_behavior",
+    "recommended_remediation",
+    "status",
+    "fix_validation",
+    "human_approved"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": { "properties": { "severity": { "const": "critical" } } },
+      "then": { "properties": { "human_approved": { "const": true } } }
+    }
+  ]
+}
