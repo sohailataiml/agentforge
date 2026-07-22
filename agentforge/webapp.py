@@ -190,6 +190,29 @@ def run_status() -> JSONResponse:
     return JSONResponse(_RUN_STATE)
 
 
+@app.post("/api/clear")
+def clear_runs(x_console_token: str | None = Header(default=None)) -> JSONResponse:
+    """Clear the previous run(s) from the console — archives the run-log JSONL
+    files so the results view resets to the empty state (recoverable, not deleted).
+    Token-gated so a public console can't be wiped by a visitor."""
+    _require_token(x_console_token)
+    import glob as _glob
+    import shutil
+    from pathlib import Path as _Path
+
+    archive = _RESULTS_DIR / "archive"
+    archive.mkdir(parents=True, exist_ok=True)
+    cleared = 0
+    for f in _glob.glob(str(_RESULTS_DIR / "run-*.jsonl")):
+        dest = archive / _Path(f).name
+        if dest.exists():
+            dest = archive / f"{_Path(f).stem}-{cleared}.jsonl"
+        shutil.move(f, str(dest))
+        cleared += 1
+    _RUN_STATE.update(status="idle", started_at=None, finished_at=None, summary=None, error=None)
+    return JSONResponse({"cleared": cleared})
+
+
 def _do_run(category: str | None, use_judge: bool) -> None:
     try:
         cases = load_all_cases(_cases_dir())
@@ -333,7 +356,7 @@ details.cases .inv { color:var(--muted); }
   <select id="run-cat"><option value="">all categories</option></select>
   <label class="chk"><input type="checkbox" id="run-judge"> use Judge</label>
   <button id="run-btn" onclick="runSuite()">Run attack suite</button>
-  <button class="ghost" onclick="refresh()">Refresh</button>
+  <button class="ghost" onclick="clearRun()">Clear previous run</button>
   <span id="run-status" class="muted"></span>
 </div>
 
@@ -379,6 +402,16 @@ document.addEventListener('click', e => {
 
 async function refresh() {
   document.getElementById('console-body').innerHTML = await (await fetch('/api/console-body')).text();
+}
+
+async function clearRun() {
+  const status = document.getElementById('run-status');
+  const r = await fetch('/api/clear', {method:'POST', headers: authHeaders()});
+  if (r.status === 401) { status.textContent = 'operator token required/invalid'; return; }
+  if (!r.ok) { status.textContent = 'clear failed'; return; }
+  const d = await r.json();
+  await refresh();                       // console-body is now the empty state
+  status.textContent = `cleared ${d.cleared} previous run(s)`;
 }
 
 async function runSuite() {

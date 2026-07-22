@@ -58,6 +58,21 @@ def test_eval_cases_info_lists_the_suite(client: TestClient):
     assert {"case_id", "category", "subcategory", "invariant", "expected_result"} <= set(c)
 
 
+def test_clear_requires_token_when_set(client: TestClient, monkeypatch):
+    monkeypatch.setattr(webapp, "CONSOLE_TOKEN", "s3cret")
+    assert client.post("/api/clear").status_code == 401
+
+
+def test_clear_archives_run_logs(client: TestClient, tmp_path, monkeypatch):
+    monkeypatch.setattr(webapp, "CONSOLE_TOKEN", None)
+    monkeypatch.setattr(webapp, "_RESULTS_DIR", tmp_path)
+    (tmp_path / "run-20260101T000000Z.jsonl").write_text('{"x":1}', encoding="utf-8")
+    resp = client.post("/api/clear")
+    assert resp.status_code == 200 and resp.json()["cleared"] == 1
+    assert not list(tmp_path.glob("run-*.jsonl"))                       # moved out of the results view
+    assert (tmp_path / "archive" / "run-20260101T000000Z.jsonl").exists()  # recoverable, not deleted
+
+
 def test_redteam_rejects_unknown_directive(client: TestClient, monkeypatch):
     monkeypatch.setattr(webapp, "CONSOLE_TOKEN", None)
     monkeypatch.setattr(webapp, "red_team_configured", lambda: True)
