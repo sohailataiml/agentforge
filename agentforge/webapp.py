@@ -292,6 +292,27 @@ def red_team(category: str = "prompt_injection", hostile: bool = False, directiv
     rec = campaign.records[0]
     if rec.attempt is None:
         return JSONResponse({"dropped_reason": rec.dropped_reason})
+
+    # Judge the attempt so the panel shows a result + rationale. Best-effort: a
+    # Judge outage must not lose the attack/transcript we already have.
+    verdict, judge_note = None, None
+    if _judge_configured():
+        try:
+            from agentforge.judge import JudgeInput, judge_attempt
+            from agentforge.red_team import _JUDGE_INVARIANT
+
+            v = judge_attempt(JudgeInput(
+                attack_category=rec.attempt["attack_category"],
+                invariant=_JUDGE_INVARIANT.format(category=rec.attempt["attack_category"]),
+                expected_safe_behavior=rec.attempt["expected_safe_behavior"],
+                input_sequence=rec.attempt["input_sequence"],
+                target_transcript=rec.attempt["target_transcript"],
+                attempt_id=rec.attempt["attempt_id"],
+            ))
+            verdict = v.verdict
+        except Exception as exc:  # noqa: BLE001 — judging is best-effort in the console
+            judge_note = f"judge unavailable: {exc}"
+
     return JSONResponse({
         "attack": rec.attempt["input_sequence"],
         "transcript": rec.attempt["target_transcript"],
@@ -300,6 +321,8 @@ def red_team(category: str = "prompt_injection", hostile: bool = False, directiv
         "model": rec.served_model or RED_TEAM_MODEL,
         "fell_back": rec.fell_back,
         "fallback_reason": rec.fallback_reason,
+        "verdict": verdict,
+        "judge_note": judge_note,
     })
 
 
@@ -334,6 +357,9 @@ label.chk { color:var(--muted); font-size:13px; display:flex; gap:6px; align-ite
 #rt-out .turn.target .lbl { color:var(--ok); }
 #rt-out .turn.fallback { border-color:var(--surprise); background:#1a1405; }
 #rt-out .turn.fallback .lbl { color:var(--surprise); }
+#rt-out .turn.verdict { border-color:var(--judge); }
+#rt-out .turn.verdict .lbl { color:var(--judge); }
+#rt-out .turn.verdict .vhead { margin-bottom:6px; font-size:12.5px; color:var(--muted); }
 .rt-prepared { margin-bottom:6px; }
 .rt-adhoc-label { margin:10px 0 4px; }
 .directive-card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-top:10px; max-width:560px; }
@@ -450,6 +476,17 @@ function renderAttackResult(d, statusEl, out) {
   if (d.fell_back) html += `<div class="turn fallback"><div class="lbl">\\u26a0 primary refused \\u2192 OpenRouter fallback</div><pre>${esc(d.fallback_reason||'')}\nServed by uncensored model: ${esc(d.model)}</pre></div>`;
   d.attack.forEach(t => html += `<div class="turn"><div class="lbl">attack · ${esc(t.role)}</div><pre>${esc(t.content)}</pre></div>`);
   d.transcript.forEach(t => html += `<div class="turn target"><div class="lbl">target · ${esc(t.role)}</div><pre>${esc(t.content)}</pre></div>`);
+  if (d.verdict) {
+    const v = d.verdict;
+    const cls = v.result === 'fail' ? 'bad' : (v.result === 'pass' ? 'ok' : 'warn');
+    const label = v.result === 'fail' ? 'EXPLOIT — target failed' : (v.result === 'pass' ? 'held' : 'partial');
+    const gate = v.escalate_to_human ? ' · escalated to human' : '';
+    html += `<div class="turn verdict"><div class="lbl">judge verdict</div>`
+      + `<div class="vhead"><span class="chip ${cls}">${label}</span> confidence ${v.confidence.toFixed(2)} · severity ${esc(v.severity)}${gate}</div>`
+      + `<pre>${esc(v.rationale)}</pre></div>`;
+  } else if (d.judge_note) {
+    html += `<div class="turn"><div class="lbl">judge</div><pre>${esc(d.judge_note)}</pre></div>`;
+  }
   out.innerHTML = html;
 }
 
