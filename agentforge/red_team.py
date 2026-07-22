@@ -74,6 +74,9 @@ class AttemptSpec:
     expected_safe_behavior: str
     gen_cost: dict[str, Any]  # {"tokens": int, "usd": float}
     strategy: str = "novel"
+    served_model: str = ""  # the model that actually generated this
+    fell_back: bool = False  # True if the primary refused/errored and the fallback served
+    fallback_reason: str | None = None
 
 
 @dataclass
@@ -84,6 +87,9 @@ class AttemptRecord:
     verdict: dict[str, Any] | None
     dropped_reason: str | None = None
     strategy: str = "novel"
+    served_model: str = ""
+    fell_back: bool = False
+    fallback_reason: str | None = None
 
     @property
     def result(self) -> str | None:
@@ -222,8 +228,11 @@ def generate_attempt_spec(
         model=model,
     )
     seq, expected = _parse_attack(completion.text, max_turns)
-    return AttemptSpec(input_sequence=seq, expected_safe_behavior=expected,
-                       gen_cost=completion.cost, strategy=strategy)
+    return AttemptSpec(
+        input_sequence=seq, expected_safe_behavior=expected, gen_cost=completion.cost,
+        strategy=strategy, served_model=completion.model,
+        fell_back=completion.fell_back, fallback_reason=completion.fallback_reason,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -301,9 +310,11 @@ def _execute_one(
     http: httpx.Client,
     parent_attempt_id: str | None = None,
 ) -> AttemptRecord:
+    prov = {"served_model": spec.served_model, "fell_back": spec.fell_back,
+            "fallback_reason": spec.fallback_reason, "strategy": spec.strategy}
     ok, reason = egress_ok(spec)
     if not ok:
-        return AttemptRecord(attempt=None, verdict=None, dropped_reason=reason, strategy=spec.strategy)
+        return AttemptRecord(attempt=None, verdict=None, dropped_reason=reason, **prov)
 
     target_result = send_to_target(
         session_id=None, messages=spec.input_sequence, patient_id=patient_id, client=http
@@ -313,7 +324,7 @@ def _execute_one(
         parent_attempt_id=parent_attempt_id, attempt_id=str(uuid.uuid4()),
     )
     verdict = _judge_record(directive, attempt, judge)
-    return AttemptRecord(attempt=attempt, verdict=verdict, strategy=spec.strategy)
+    return AttemptRecord(attempt=attempt, verdict=verdict, **prov)
 
 
 def run_directive(

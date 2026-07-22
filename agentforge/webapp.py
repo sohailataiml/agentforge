@@ -202,7 +202,9 @@ def red_team(category: str = "prompt_injection", patient_id: str = "a2345ab2-477
         "transcript": rec.attempt["target_transcript"],
         "expected_safe_behavior": rec.attempt["expected_safe_behavior"],
         "cost": rec.attempt["cost"],
-        "model": RED_TEAM_MODEL,
+        "model": rec.served_model or RED_TEAM_MODEL,
+        "fell_back": rec.fell_back,
+        "fallback_reason": rec.fallback_reason,
     })
 
 
@@ -235,6 +237,8 @@ label.chk { color:var(--muted); font-size:13px; display:flex; gap:6px; align-ite
 #rt-out .turn { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 14px; margin-top:8px; }
 #rt-out .turn .lbl { color:var(--accent); font-size:11px; text-transform:uppercase; letter-spacing:.7px; }
 #rt-out .turn.target .lbl { color:var(--ok); }
+#rt-out .turn.fallback { border-color:var(--surprise); background:#1a1405; }
+#rt-out .turn.fallback .lbl { color:var(--surprise); }
 #rt-out pre { margin:6px 0 0; white-space:pre-wrap; word-break:break-word; font-size:12.5px; color:#c7cede; }
 .warn-note { color:var(--surprise); font-size:12.5px; margin-bottom:10px; }
 .spin { display:inline-block; width:12px; height:12px; border:2px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:spin .7s linear infinite; vertical-align:middle; }
@@ -328,8 +332,9 @@ async function redTeam() {
     const d = await r.json();
     if (!r.ok) { status.textContent = 'error: ' + (d.detail||'failed'); btn.disabled=false; return; }
     if (d.dropped_reason) { status.textContent=''; out.innerHTML = `<div class="turn"><div class="lbl">dropped by egress screen</div><pre>${esc(d.dropped_reason)}</pre></div>`; btn.disabled=false; return; }
-    status.textContent = `generated on ${d.model} · $${d.cost.usd.toFixed(4)}`;
+    status.textContent = `generated on ${esc(d.model)} · $${d.cost.usd.toFixed(4)}`;
     let html='';
+    if (d.fell_back) html += `<div class="turn fallback"><div class="lbl">\\u26a0 primary refused \\u2192 OpenRouter fallback</div><pre>${esc(d.fallback_reason||'')}\nServed by uncensored model: ${esc(d.model)}</pre></div>`;
     d.attack.forEach(t => html += `<div class="turn"><div class="lbl">attack · ${esc(t.role)}</div><pre>${esc(t.content)}</pre></div>`);
     d.transcript.forEach(t => html += `<div class="turn target"><div class="lbl">target · ${esc(t.role)}</div><pre>${esc(t.content)}</pre></div>`);
     out.innerHTML = html;

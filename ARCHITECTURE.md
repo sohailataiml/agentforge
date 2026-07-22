@@ -302,16 +302,22 @@ variable — `RED_TEAM_BASE_URL` / `RED_TEAM_MODEL` / `RED_TEAM_API_KEY`:
 
 | | |
 |---|---|
-| **Default** | Groq free tier · `llama-3.3-70b-versatile` |
-| **Fallback** | any OpenRouter uncensored open-weight model — *same code path*, env swap only |
+| **Primary** | Groq free tier · `llama-3.3-70b-versatile` (fast, cheap, safety-tuned) |
+| **Fallback** | OpenRouter uncensored model (`dolphin-mistral-24b-venice-edition`) |
 
 This realizes the three model-tiering constraints from §Key Design Decisions #2
 in one seam: **independence** (a different vendor from the Anthropic Judge),
 **cost** (the Red Team is the highest-volume caller — one generation per attempt
 plus N per mutation family, so it must be the cheap/open tier), and
-**refusal-avoidance** (safety-tuned frontier models decline to *generate*
-offensive prompts; an open model does not). The seam only **produces** text — it
-never executes anything.
+**refusal-avoidance**. The last is now a **runtime, automatic failover**, not just
+a config swap: `complete()` calls the primary, and if it **refuses** (a refusal
+opener detected in the response — `is_refusal()`) or **errors/unreachable**, it
+transparently retries on the uncensored fallback provider and marks the result
+`fell_back=True` with a reason. So a safety-tuned Groq refusing to generate an
+offensive prompt does not block the campaign — OpenRouter's uncensored model
+picks it up automatically, and the provenance (which model served the attack) is
+carried through to the `AttackAttempt` and the console. The seam only **produces**
+text — it never executes anything.
 
 ### 2. Agent pipeline — [`agentforge/red_team.py`](agentforge/red_team.py)
 
