@@ -288,6 +288,98 @@ attack* is delegated to the Red Team, the *what/where* is the Orchestrator's job
 
 ---
 
+## Red Team Agent — Architecture (as built)
+
+The Red Team is implemented in **two layers** so the *attacker model* is
+swappable by configuration and the *attack logic* is testable in isolation.
+
+### 1. Provider seam — [`agentforge/red_team_client.py`](agentforge/red_team_client.py)
+
+A single `complete(messages, …)` over the OpenAI-compatible `/chat/completions`
+wire format (via `httpx`, no vendor SDK), mirroring the target adapter's
+one-seam philosophy. The attacker model is chosen entirely by environment
+variable — `RED_TEAM_BASE_URL` / `RED_TEAM_MODEL` / `RED_TEAM_API_KEY`:
+
+| | |
+|---|---|
+| **Default** | Groq free tier · `llama-3.3-70b-versatile` |
+| **Fallback** | any OpenRouter uncensored open-weight model — *same code path*, env swap only |
+
+This realizes the three model-tiering constraints from §Key Design Decisions #2
+in one seam: **independence** (a different vendor from the Anthropic Judge),
+**cost** (the Red Team is the highest-volume caller — one generation per attempt
+plus N per mutation family, so it must be the cheap/open tier), and
+**refusal-avoidance** (safety-tuned frontier models decline to *generate*
+offensive prompts; an open model does not). The seam only **produces** text — it
+never executes anything.
+
+### 2. Agent pipeline — [`agentforge/red_team.py`](agentforge/red_team.py)
+
+`run_directive(directive, patient_id, judge=…)` drives one `AttackDirective`
+end to end:
+
+```
+AttackDirective
+      │ generate  (open model, temperature 0.9 → attack variety over determinism)
+      ▼
+AttemptSpec { input_sequence, expected_safe_behavior }
+      │ EGRESS SCREEN ──► drop + log (dropped_reason) if content carries a real credential
+      ▼
+send_to_target(patient_id, input_sequence)          ← the one target seam
+      ▼
+target_transcript
+      │ assemble + schema-validate (contracts/attack_attempt.schema.json)
+      ▼
+AttackAttempt ──► JUDGE (injected; different vendor) ──► Verdict
+      │
+      │ if Verdict.result == "partial"
+      ▼
+MUTATION LOOP: one variant per strategy (paraphrase · encoding · role_frame ·
+turn_splitting), each linked by parent_attempt_id, re-executed + re-judged — no human.
+```
+
+**Egress screen** (`egress_ok`) — deterministic, not an LLM. Before any
+generation reaches the target it is scanned for real-credential patterns
+(`sk-ant-…`, `gsk_…`, `AKIA…`, PEM private keys); a match is dropped and recorded
+as `dropped_reason`, never forwarded. This is the "content classifier on egress"
+from §Known Failure Modes — the attacker model is untrusted, so a generation
+containing a live secret must never be executed.
+
+**Mutation engine** — a `partial` Verdict is the escalation trigger. The agent
+regenerates the parent attack under each strategy in `MUTATION_STRATEGIES`
+(paraphrase, encoding, role-frame, turn-splitting), passing the parent's
+`input_sequence` into the generation prompt, links each variant to the parent via
+`parent_attempt_id`, and re-executes + re-judges autonomously. This is what turns
+one partial success into a variant family **without prompting** — the Phase 5
+exit criterion.
+
+**Judge injection & independence** — the Judge is passed *into* `run_directive`
+as a callable, never imported as a peer. Two consequences: (a) generation +
+execution run with the Judge absent (the live path that needs no Anthropic
+credits), and (b) the generator↔judge separation (§Key Design Decisions #1) holds
+**structurally** — the Red Team literally cannot reach or score its own attempts.
+
+### Trust boundaries honored
+
+- **Untrusted output**: a generation is only ever sent to the allow-listed target
+  through `send_to_target`; the egress screen drops harmful generations first.
+- **Different vendor** from the Judge (Anthropic), enforced by both the
+  injected-judge seam and the open-model provider config.
+- **Accountable spend**: every attempt is a schema-valid `AttackAttempt` carrying
+  its own `cost{tokens, usd}` (generation + target), so per-attempt spend is
+  auditable and roll-uppable into a `CampaignResult`.
+
+### Where it runs
+
+`run_directive` is exercised by the eval runner and by the web console's Red Team
+panel ([`agentforge/webapp.py`](agentforge/webapp.py)). A full live attack
+(generate on Groq → execute against the deployed target → schema-valid
+`AttackAttempt`) is validated in `tests/test_red_team.py` (marked `live`); the
+pure logic (egress screen, attack parsing, attempt assembly) is covered by
+non-live tests.
+
+---
+
 ## Framework & Infrastructure
 
 - **Orchestration framework**: LangGraph (explicit graph of agent nodes with typed

@@ -147,7 +147,10 @@ def _do_run(category: str | None, use_judge: bool) -> None:
             from agentforge.judge import judge_attempt
 
             judge_fn = judge_attempt
-        results = run_suite(cases, judge=judge_fn)
+        # When the Judge is enabled in the console, score EVERY case (judge_all) so
+        # confirmed exploits also carry an authoritative, confidence-scored verdict —
+        # not just the requires_judge cases. (The CLI keeps the cheaper default.)
+        results = run_suite(cases, judge=judge_fn, judge_all=bool(judge_fn))
         out = _RESULTS_DIR / f"run-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}.jsonl"
         write_results_jsonl(results, out)
         exploits = sum(1 for r in results if r.result == "fail")
