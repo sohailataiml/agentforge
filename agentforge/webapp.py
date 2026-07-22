@@ -33,7 +33,7 @@ from agentforge.eval_case import load_all_cases
 from agentforge.eval_runner import run_suite, write_results_jsonl
 from agentforge.judge import JUDGE_MODEL
 from agentforge.red_team import build_directive, run_directive
-from agentforge.red_team_client import RED_TEAM_MODEL, red_team_configured
+from agentforge.red_team_client import RED_TEAM_MODEL, RedTeamError, red_team_configured
 from agentforge.rubrics import CATEGORIES
 from agentforge.target_adapter import TARGET_BASE_URL
 from evals.dashboard import (
@@ -276,12 +276,19 @@ def red_team(category: str = "prompt_injection", hostile: bool = False, directiv
             pd["attack_category"], pd["subcategory"], pd["owasp_refs"],
             strategy_hint=pd["strategy"], token_budget=pd["token_budget"], max_turns=pd["max_turns"],
         )
-        campaign = run_directive(directive, pd["patient_id"], hostile=hostile)
+        pid = pd["patient_id"]
     else:  # ad-hoc: category + hostile toggle
         if category not in CATEGORIES:
             raise HTTPException(status_code=400, detail=f"unknown category {category!r}")
         directive = build_directive(category, "console-adhoc", ["LLM01"], max_turns=1)
-        campaign = run_directive(directive, patient_id, hostile=hostile)
+        pid = patient_id
+
+    try:
+        campaign = run_directive(directive, pid, hostile=hostile)
+    except RedTeamError as exc:
+        # e.g. both Groq refused AND the OpenRouter fallback was rate-limited/errored —
+        # surface a clean JSON error the UI can show, not a raw 500.
+        raise HTTPException(status_code=502, detail=f"attack generation failed: {exc}") from exc
     rec = campaign.records[0]
     if rec.attempt is None:
         return JSONResponse({"dropped_reason": rec.dropped_reason})

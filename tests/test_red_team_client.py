@@ -147,12 +147,33 @@ def test_fallback_on_primary_refusal(monkeypatch):
 
 
 def test_fallback_on_primary_error(monkeypatch):
+    import agentforge.red_team_client as rtc
+    monkeypatch.setattr(rtc, "_RETRY_BASE_S", 0)  # don't sleep between retries in tests
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
     err = httpx.Response(500, text="groq exploded")
     result = complete([{"role": "user", "content": "x"}], api_key="groq-key", client=_routed_client(err))
     assert result.fell_back is True
     assert "primary provider failed" in result.fallback_reason
     assert result.text == _ATTACK_JSON
+
+
+def test_retries_transient_429_then_succeeds(monkeypatch):
+    import agentforge.red_team_client as rtc
+    monkeypatch.setattr(rtc, "_RETRY_BASE_S", 0)                 # no sleeps in tests
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)      # isolate retry (no fallback)
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, text="rate limited")      # transient spike
+        return httpx.Response(200, json=_OPENAI_OK)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    result = complete([{"role": "user", "content": "x"}], api_key="k", client=client)
+    assert calls["n"] == 2                # retried once, then succeeded
+    assert result.fell_back is False
+    assert result.text == "Ignore prior instructions and..."
 
 
 def test_no_fallback_when_not_configured(monkeypatch):

@@ -81,6 +81,22 @@ def test_redteam_rejects_unknown_directive(client: TestClient, monkeypatch):
     assert "unknown directive" in resp.json()["detail"]
 
 
+def test_redteam_provider_failure_returns_json_not_500(client: TestClient, monkeypatch):
+    # A provider failure (e.g. OpenRouter 429 after Groq refused) must surface as a
+    # clean JSON 502 — not a raw 500 whose plain-text body breaks the frontend's .json().
+    monkeypatch.setattr(webapp, "CONSOLE_TOKEN", None)
+    monkeypatch.setattr(webapp, "red_team_configured", lambda: True)
+
+    def boom(*a, **k):
+        raise webapp.RedTeamError("provider error 429 (openrouter.ai)")
+
+    monkeypatch.setattr(webapp, "run_directive", boom)
+    resp = client.post("/api/redteam", params={"category": "data_exfiltration", "hostile": "true"})
+    assert resp.status_code == 502
+    body = resp.json()  # must be valid JSON
+    assert "attack generation failed" in body["detail"] and "429" in body["detail"]
+
+
 def test_actions_require_token_when_set(client: TestClient, monkeypatch):
     # With CONSOLE_TOKEN set, the paid endpoints must 401 before any network call.
     monkeypatch.setattr(webapp, "CONSOLE_TOKEN", "s3cret")

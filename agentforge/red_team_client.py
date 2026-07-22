@@ -28,10 +28,17 @@ untrusted: this seam only *produces* text; nothing here executes it.
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+
+# Retry transient provider failures (esp. OpenRouter/Venice 429 rate-limit spikes)
+# before giving up. _RETRY_BASE_S is module-level so tests can zero it out.
+_RETRY_STATUS = (429, 500, 502, 503, 504)
+_RETRY_ATTEMPTS = 3
+_RETRY_BASE_S = 0.8
 
 # Primary provider — Groq free tier: fastest, no card, different vendor from the Judge.
 RED_TEAM_BASE_URL = os.environ.get("RED_TEAM_BASE_URL", "https://api.groq.com/openai/v1")
@@ -138,14 +145,29 @@ def _call_provider(
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     owns_client = client is None
     http = client or httpx.Client(timeout=RED_TEAM_TIMEOUT_S)
+    resp = None
+    last_exc: Exception | None = None
     try:
-        resp = http.post(f"{base}/chat/completions", json=payload, headers=headers)
-    except httpx.HTTPError as exc:
-        raise RedTeamError(f"provider unreachable ({base}): {exc}") from exc
+        for attempt in range(_RETRY_ATTEMPTS):
+            try:
+                resp = http.post(f"{base}/chat/completions", json=payload, headers=headers)
+                last_exc = None
+            except httpx.HTTPError as exc:
+                resp, last_exc = None, exc
+            if resp is not None and resp.status_code not in _RETRY_STATUS:
+                break
+            if attempt < _RETRY_ATTEMPTS - 1:
+                delay = _RETRY_BASE_S * (attempt + 1)
+                ra = (resp.headers.get("retry-after") if resp is not None else "") or ""
+                if ra.replace(".", "", 1).isdigit():
+                    delay = min(float(ra), 10.0)
+                time.sleep(delay)
     finally:
         if owns_client:
             http.close()
 
+    if resp is None:
+        raise RedTeamError(f"provider unreachable ({base}): {last_exc}") from last_exc
     if resp.status_code >= 400:
         raise RedTeamError(f"provider error {resp.status_code} ({base}): {resp.text[:400]}")
     try:
