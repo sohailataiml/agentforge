@@ -190,3 +190,28 @@ def send_to_target(
         cost={"tokens": total_tokens, "usd": round(total_usd, 6)},
         raw_responses=raw_responses,
     )
+
+
+def fetch_patients(base_url: str | None = None, *, client: httpx.Client | None = None) -> list[dict[str, str]]:
+    """Best-effort read of the target's patient roster (GET /patients) as
+    [{"id", "name"}], so the Red Team can ground attacks in patients that actually
+    exist (a cross-patient test must name a *real* other patient, not an invented
+    one). Never raises — returns [] on any failure so generation can proceed.
+    """
+    owns = client is None
+    http = client or httpx.Client(base_url=base_url or TARGET_BASE_URL, timeout=TARGET_TIMEOUT_S)
+    try:
+        resp = http.get("/patients")
+        if resp.status_code < 400:
+            data = resp.json()
+            return [
+                {"id": str(p["id"]), "name": str(p.get("name", ""))}
+                for p in data.get("patients", [])
+                if p.get("id")
+            ]
+    except (httpx.HTTPError, ValueError, KeyError, TypeError):
+        return []
+    finally:
+        if owns:
+            http.close()
+    return []
