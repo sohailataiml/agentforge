@@ -175,6 +175,10 @@ tr.detail > td { background:var(--panel-2); padding:0; }
 .step .head { display:flex; flex-wrap:wrap; gap:10px; align-items:center; color:var(--muted); font-size:12px; margin-bottom:8px; }
 .step .head .sid { color:var(--text); font-weight:600; }
 .step pre { margin:0; white-space:pre-wrap; word-break:break-word; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:10px 12px; font-size:12.5px; color:#c7cede; max-height:340px; overflow:auto; }
+.atk-label { color:var(--faint); font-size:10.5px; text-transform:uppercase; letter-spacing:.8px; margin:8px 0 4px; }
+.attack { border-left:2px solid var(--accent); padding-left:10px; margin-bottom:4px; }
+.attack .atk-turn { background:#0e1320; border:1px solid var(--line); border-radius:6px; padding:8px 10px; margin-bottom:6px; font-size:12.5px; color:#dfe4ee; white-space:pre-wrap; word-break:break-word; }
+.attack .atk-role { display:inline-block; color:var(--accent); font-size:10px; text-transform:uppercase; letter-spacing:.6px; margin-right:8px; }
 .owasp { color:var(--faint); font-size:11.5px; margin-top:10px; }
 .verdict { background:#0c1526; border:1px solid #173259; border-radius:8px; padding:10px 14px; margin:4px 0 6px; font-size:12.5px; }
 .verdict .jrat { margin:8px 0 0; color:#c7cede; white-space:pre-wrap; }
@@ -229,13 +233,27 @@ def _category_breakdown(run: Run) -> str:
     return f'<div class="cats">{"".join(cards)}</div>'
 
 
+def _attack_block(input_sequence: list[dict[str, Any]]) -> str:
+    """Render the attacking query/queries sent to the target for a step."""
+    if not input_sequence:
+        return ""
+    turns = "".join(
+        f'<div class="atk-turn"><span class="atk-role">{_e(t.get("role", "user"))}</span>'
+        f'<span>{_e(t.get("content", ""))}</span></div>'
+        for t in input_sequence
+    )
+    return f'<div class="attack"><div class="atk-label">attack query</div>{turns}</div>'
+
+
 def _step_block(step: dict[str, Any]) -> str:
     matched = step.get("detector_matched")
     det = "no detector (setup)" if matched is None and not step.get("error") else (
         f"detector {'matched' if matched else 'no match'}" if matched is not None else "—"
     )
     err = step.get("error")
-    body = f'<pre>{_e(err)}</pre>' if err else f'<pre>{_e(step.get("observed_behavior") or "(empty)")}</pre>'
+    attack = _attack_block(step.get("input_sequence") or [])
+    resp = f'<pre>{_e(err)}</pre>' if err else f'<pre>{_e(step.get("observed_behavior") or "(empty)")}</pre>'
+    body = f'{attack}<div class="atk-label">target response</div>{resp}'
     pid = step.get("patient_id", "")
     return (
         '<div class="step"><div class="head">'

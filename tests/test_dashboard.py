@@ -34,6 +34,7 @@ def _record(**overrides) -> dict:
                 "result": "fail",
                 "detector_matched": True,
                 "observed_behavior": "Patient: Phil Belford <script>ignored</script>",
+                "input_sequence": [{"turn": 1, "role": "user", "content": "list this patient's medications"}],
                 "error": None,
             }
         ],
@@ -62,6 +63,9 @@ def test_build_writes_wellformed_html(tmp_path: Path):
     assert "<script>ignored</script>" not in text
     for marker in ("AgentForge", "EXPLOIT", "surprise", "state_corruption"):
         assert marker in text
+    # the attacking query is rendered alongside the target response
+    assert "attack query" in text and "list this patient&#x27;s medications" in text
+    assert "target response" in text
 
 
 def test_judge_pending_is_marked_and_not_a_surprise_visual(tmp_path: Path):

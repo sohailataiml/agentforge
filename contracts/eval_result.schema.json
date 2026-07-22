@@ -50,6 +50,21 @@
           "result": { "type": "string", "enum": ["pass", "fail", "partial", "error", "setup"] },
           "detector_matched": { "type": ["boolean", "null"] },
           "observed_behavior": { "type": "string" },
+          "input_sequence": {
+            "type": "array",
+            "description": "The attack turns sent to the target for this step.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "turn": { "type": "integer" },
+                "role": { "type": "string" },
+                "content": { "type": "string" },
+                "doc_type": { "type": "string" }
+              },
+              "required": ["turn", "role", "content"],
+              "additionalProperties": false
+            }
+          },
           "error": { "type": ["string", "null"] }
         },
         "required": ["step_id", "patient_id", "result", "observed_behavior"],

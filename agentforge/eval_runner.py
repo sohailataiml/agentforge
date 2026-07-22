@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -52,6 +52,7 @@ class StepOutcome:
     result: StepResult
     detector_matched: bool | None
     observed_behavior: str
+    input_sequence: list[dict[str, Any]] = field(default_factory=list)  # the attack sent this step
     error: str | None = None
 
     def to_record(self) -> dict[str, Any]:
@@ -185,6 +186,7 @@ def run_case(
                         result="error",
                         detector_matched=None,
                         observed_behavior="",
+                        input_sequence=[dict(m) for m in step.input_sequence],
                         error=str(exc),
                     )
                 )
@@ -244,6 +246,7 @@ def run_case(
 
 def _grade_step(step: Step, target_result: Any, transcript: str) -> StepOutcome:
     snippet = transcript[:_TRANSCRIPT_SNIPPET_CHARS]
+    attack = [dict(m) for m in step.input_sequence]
     if step.detector is None:
         return StepOutcome(
             step_id=step.step_id,
@@ -252,6 +255,7 @@ def _grade_step(step: Step, target_result: Any, transcript: str) -> StepOutcome:
             result="setup",
             detector_matched=None,
             observed_behavior=snippet,
+            input_sequence=attack,
         )
     matched = step.detector.matched(transcript)
     return StepOutcome(
@@ -261,6 +265,7 @@ def _grade_step(step: Step, target_result: Any, transcript: str) -> StepOutcome:
         result=step.detector.outcome(transcript),
         detector_matched=matched,
         observed_behavior=snippet,
+        input_sequence=attack,
     )
 
 

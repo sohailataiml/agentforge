@@ -80,6 +80,8 @@ def test_run_case_captures_target_error_as_error_step_without_network():
     assert result.surprise is False
     assert result.steps[0].result == "error"
     assert result.steps[0].error and "user" in result.steps[0].error
+    # the attack that was attempted is captured on the step for the results view
+    assert result.steps[0].input_sequence == [{"turn": 1, "role": "system_context", "content": "x"}]
 
 
 def test_runner_output_conforms_to_eval_result_contract():
