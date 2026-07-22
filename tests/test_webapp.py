@@ -42,6 +42,30 @@ def test_console_body_and_run_status(client: TestClient):
     assert client.get("/api/run/status").json()["status"] in {"idle", "running", "done", "error"}
 
 
+def test_prepared_directives_expose_expected_fields(client: TestClient):
+    dirs = client.get("/api/directives").json()["directives"]
+    d = next(x for x in dirs if x["id"] == "cross-patient-boundary")
+    assert d["attack_category"] == "data_exfiltration"
+    assert d["subcategory"] == "a synthetic cross-patient boundary test"
+    assert d["strategy"] == "novel"
+    assert d["patient_id"] and d["token_budget"] and d["max_turns"]  # synthetic id + small budget + short turns
+
+
+def test_eval_cases_info_lists_the_suite(client: TestClient):
+    cases = client.get("/api/cases").json()["cases"]
+    assert len(cases) >= 3
+    c = cases[0]
+    assert {"case_id", "category", "subcategory", "invariant", "expected_result"} <= set(c)
+
+
+def test_redteam_rejects_unknown_directive(client: TestClient, monkeypatch):
+    monkeypatch.setattr(webapp, "CONSOLE_TOKEN", None)
+    monkeypatch.setattr(webapp, "red_team_configured", lambda: True)
+    resp = client.post("/api/redteam", params={"directive_id": "does-not-exist"})
+    assert resp.status_code == 400
+    assert "unknown directive" in resp.json()["detail"]
+
+
 def test_actions_require_token_when_set(client: TestClient, monkeypatch):
     # With CONSOLE_TOKEN set, the paid endpoints must 401 before any network call.
     monkeypatch.setattr(webapp, "CONSOLE_TOKEN", "s3cret")
