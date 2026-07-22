@@ -104,6 +104,9 @@ def _redteam_panel() -> str:
         '<div class="rt"><h2 class="sec">Red Team — generate &amp; attack (live)</h2>'
         f'{warn}'
         f'<div class="rt-controls"><select id="rt-cat">{options}</select>'
+        '<label class="chk" title="Uses malicious-intent framing that the safety-tuned '
+        'primary (Groq) refuses, forcing failover to the OpenRouter uncensored model">'
+        '<input type="checkbox" id="rt-hostile"> hostile framing (force Groq refusal → OpenRouter)</label>'
         f'<button id="rt-go" onclick="redTeam()" {disabled}>Generate &amp; attack</button>'
         '<span id="rt-status" class="muted"></span></div>'
         '<div id="rt-out"></div></div>'
@@ -185,7 +188,8 @@ def start_run(category: str | None = None, judge: bool = False,
 
 
 @app.post("/api/redteam")
-def red_team(category: str = "prompt_injection", patient_id: str = "a2345ab2-477b-4b59-b7be-7e82aa7f9d8c",
+def red_team(category: str = "prompt_injection", hostile: bool = False,
+             patient_id: str = "a2345ab2-477b-4b59-b7be-7e82aa7f9d8c",
              x_console_token: str | None = Header(default=None)) -> JSONResponse:
     _require_token(x_console_token)
     if not red_team_configured():
@@ -193,7 +197,7 @@ def red_team(category: str = "prompt_injection", patient_id: str = "a2345ab2-477
     if category not in CATEGORIES:
         raise HTTPException(status_code=400, detail=f"unknown category {category!r}")
     directive = build_directive(category, "console-adhoc", ["LLM01"], max_turns=1)
-    campaign = run_directive(directive, patient_id)
+    campaign = run_directive(directive, patient_id, hostile=hostile)
     rec = campaign.records[0]
     if rec.attempt is None:
         return JSONResponse({"dropped_reason": rec.dropped_reason})
@@ -325,10 +329,11 @@ async function poll(btn, status) {
 
 async function redTeam() {
   const cat = document.getElementById('rt-cat').value;
+  const hostile = document.getElementById('rt-hostile').checked;
   const btn = document.getElementById('rt-go'); const status = document.getElementById('rt-status'); const out = document.getElementById('rt-out');
   btn.disabled = true; status.innerHTML = '<span class="spin"></span> generating on the open model &amp; attacking…'; out.innerHTML='';
   try {
-    const r = await fetch(`/api/redteam?category=${encodeURIComponent(cat)}`, {method:'POST', headers: authHeaders()});
+    const r = await fetch(`/api/redteam?category=${encodeURIComponent(cat)}&hostile=${hostile}`, {method:'POST', headers: authHeaders()});
     const d = await r.json();
     if (!r.ok) { status.textContent = 'error: ' + (d.detail||'failed'); btn.disabled=false; return; }
     if (d.dropped_reason) { status.textContent=''; out.innerHTML = `<div class="turn"><div class="lbl">dropped by egress screen</div><pre>${esc(d.dropped_reason)}</pre></div>`; btn.disabled=false; return; }
