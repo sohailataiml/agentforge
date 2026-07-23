@@ -885,7 +885,7 @@ async function pollOrchestrator(btn, status) {
     const attempts = (res.attempts || []).map(renderOrchAttempt).join('')
       || '<div class="muted" style="margin:6px 0 0">no usable attack (dropped by the egress screen)</div>';
     const chip = n > 0 ? `<span class="chip bad">${n} exploit${n === 1 ? '' : 's'}</span>` : '<span class="chip ok">held</span>';
-    return `<details class="orch-item"${n > 0 ? ' open' : ''}>`
+    return '<details class="orch-item">'  // start collapsed; the summary chip shows the outcome at a glance
       + `<summary><span class="oh-arrow">\\u25b8</span> hand-off ${i + 1} → Red Team · <b>${esc(dir.attack_category)}</b> · ${esc(dir.priority)} ${chip}</summary>`
       + `<div class="orch-body">${directiveCard(dir)}<div class="orch-attempts">${attempts}</div></div></details>`;
   }).join('');
