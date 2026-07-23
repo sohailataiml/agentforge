@@ -21,6 +21,7 @@ target/provider calls don't stall the event loop.
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 from datetime import datetime, timezone
@@ -180,6 +181,16 @@ def _regression_panel() -> str:
     )
 
 
+def _reports_panel() -> str:
+    return (
+        '<section class="panel p-reports"><header class="panel-head"><div class="num">5</div>'
+        '<div><h2>Vulnerability Reports</h2><p class="sub">Confirmed exploits documented by the '
+        'Documentation Agent — schema-valid, reproducible, with critical severity human-approved. '
+        'Read-only; click a report to expand.</p></div></header>'
+        '<div id="reports-out" class="muted">loading reports…</div></section>'
+    )
+
+
 def _orchestrator_panel() -> str:
     return (
         '<section class="panel p-orch"><header class="panel-head"><div class="num">4</div>'
@@ -298,6 +309,26 @@ def _cases_dir():
     from pathlib import Path
 
     return Path(__file__).resolve().parent.parent / "evals" / "cases"
+
+
+def _reports_dir():
+    from pathlib import Path
+
+    return Path(__file__).resolve().parent.parent / "reports"
+
+
+@app.get("/api/reports")
+def reports_list() -> JSONResponse:
+    """The confirmed VulnReports (reports/AF-*.json). Read-only, free, no token —
+    it just reads the report corpus the Documentation Agent published."""
+    out = []
+    for jf in sorted(_reports_dir().glob("AF-*.json")):
+        try:
+            out.append(json.loads(jf.read_text(encoding="utf-8")))
+        except (OSError, json.JSONDecodeError):
+            continue
+    out.sort(key=lambda r: ({"critical": 0, "high": 1, "medium": 2, "low": 3}.get(r.get("severity"), 9), r.get("vuln_id", "")))
+    return JSONResponse({"reports": out})
 
 
 @app.post("/api/run")
@@ -493,7 +524,7 @@ def start_orchestrator(budget: float = 1.0, max_directives: int = 3, patient_id:
 def index() -> str:
     return (_PAGE.replace("{{CSS}}", DASH_CSS).replace("{{BODY}}", _console_body())
             .replace("{{REG}}", _regression_panel()).replace("{{ORCH}}", _orchestrator_panel())
-            .replace("{{RT}}", _redteam_panel()))
+            .replace("{{RT}}", _redteam_panel()).replace("{{REPORTS}}", _reports_panel()))
 
 
 _PAGE = """<!doctype html>
@@ -520,6 +551,11 @@ label.chk { color:var(--muted); font-size:13px; display:flex; gap:6px; align-ite
 .panel::before { content:''; position:absolute; left:0; top:0; bottom:0; width:3px; border-radius:16px 0 0 16px; background:var(--accent); }
 .panel.p-reg::before { background:var(--judge); } .panel.p-rt::before { background:var(--surprise); }
 .panel.p-orch::before { background:var(--ok); } .panel.p-orch .panel-head .num { color:var(--ok); }
+.panel.p-reports::before { background:var(--bad); } .panel.p-reports .panel-head .num { color:var(--bad); }
+#reports-out .rep-text { color:#c7cede; font-size:12.5px; margin:4px 0 8px; white-space:pre-wrap; word-break:break-word; }
+#reports-out .reg-table td:first-child { color:var(--muted); width:130px; }
+#reports-out ol { margin:6px 0 8px; padding-left:20px; color:#c7cede; font-size:12.5px; }
+#reports-out ol li { margin:3px 0; }
 .panel-head { display:flex; align-items:flex-start; gap:14px; margin:0 0 18px; padding-bottom:16px; border-bottom:1px solid var(--line); }
 .panel-head .num { flex:0 0 auto; width:30px; height:30px; border-radius:9px; display:grid; place-items:center; font-weight:700; font-size:14px; color:var(--accent); border:1px solid var(--line); background:var(--panel-2); }
 .panel.p-reg .panel-head .num { color:var(--judge); } .panel.p-rt .panel-head .num { color:var(--surprise); }
@@ -594,6 +630,7 @@ details.cases .inv { color:var(--muted); }
 {{REG}}
 {{RT}}
 {{ORCH}}
+{{REPORTS}}
 
 <footer>AgentForge operator console — synthetic demo patients; paid actions gated by operator token.</footer>
 </div>
@@ -913,7 +950,47 @@ function renderOrchAttempt(a) {
   return h;
 }
 
-loadConfig(); loadDirectives(); loadCases();
+// --- Vulnerability Reports (read-only) ----------------------------------
+const SEV_CLS = {critical: 'bad', high: 'err', medium: 'warn', low: 'ok'};
+
+function renderReport(r) {
+  const sev = SEV_CLS[r.severity] || 'warn';
+  const seq = (r.minimal_attack_sequence || []).map(s =>
+    `<div class="atk-turn"><span class="atk-role">turn ${s.turn}</span><span>${esc(s.content)}</span></div>`).join('');
+  const steps = (r.reproduction_steps || []).map(s => `<li>${esc(s)}</li>`).join('');
+  const fv = r.fix_validation || {};
+  const approval = r.human_approved ? 'human-approved' : 'not approved';
+  const body = `<table class="reg-table"><tbody>
+      <tr><td>severity</td><td><span class="chip ${sev}">${esc(r.severity)}</span></td></tr>
+      <tr><td>category</td><td>${esc(r.attack_category)}</td></tr>
+      <tr><td>OWASP</td><td>${esc((r.owasp_refs || []).join(', '))}</td></tr>
+      <tr><td>status</td><td>${esc(r.status)} · ${approval}</td></tr>
+      <tr><td>fix validated</td><td>${fv.validated ? 'yes' : 'no'}${fv.regression_case_id ? ' · ' + esc(fv.regression_case_id) : ''}</td></tr>
+      <tr><td>attempt</td><td class="mono">${esc(r.attempt_id)}</td></tr>
+    </tbody></table>
+    <div class="atk-label">clinical impact</div><div class="rep-text">${esc(r.clinical_impact)}</div>
+    <div class="atk-label">minimal attack sequence</div><div class="attack">${seq}</div>
+    <div class="atk-label">reproduction steps</div><ol>${steps}</ol>
+    <div class="atk-label">observed behaviour</div><div class="rep-text">${esc(r.observed_behavior)}</div>
+    <div class="atk-label">expected behaviour</div><div class="rep-text">${esc(r.expected_behavior)}</div>
+    <div class="atk-label">recommended remediation</div><div class="rep-text">${esc(r.recommended_remediation)}</div>`;
+  return `<details class="orch-item"><summary><span class="oh-arrow">\\u25b8</span> `
+    + `<b>${esc(r.vuln_id)}</b> · <span class="chip ${sev}">${esc(r.severity)}</span> · `
+    + `${esc(r.attack_category)} — ${esc(r.title)}</summary><div class="orch-body">${body}</div></details>`;
+}
+
+async function loadReports() {
+  const out = document.getElementById('reports-out');
+  try {
+    const reps = (await (await fetch('/api/reports')).json()).reports || [];
+    out.classList.remove('muted');
+    out.innerHTML = reps.length
+      ? `<div class="muted" style="margin-bottom:6px">${reps.length} confirmed report(s)</div>` + reps.map(renderReport).join('')
+      : '<div class="empty">No reports yet. Run <code>python -m agentforge.generate_reports --approve-critical</code>.</div>';
+  } catch (e) { out.textContent = 'failed to load reports'; }
+}
+
+loadConfig(); loadDirectives(); loadCases(); loadReports();
 </script></body></html>"""
 
 

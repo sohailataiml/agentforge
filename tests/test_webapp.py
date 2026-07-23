@@ -35,6 +35,14 @@ def test_regression_status_starts_idle(client: TestClient):
     assert client.get("/api/regression/status").json()["status"] in {"idle", "running", "done", "error"}
 
 
+def test_reports_endpoint_lists_vuln_reports(client: TestClient):
+    reps = client.get("/api/reports").json()["reports"]
+    assert len(reps) >= 3  # the confirmed VulnReport corpus
+    r = reps[0]
+    assert {"vuln_id", "severity", "attack_category", "title", "minimal_attack_sequence"} <= set(r)
+    assert reps[0]["severity"] == "critical"  # sorted critical-first
+
+
 def test_config_reports_capabilities(client: TestClient):
     cfg = client.get("/api/config").json()
     assert cfg["target_url"].startswith("http")
