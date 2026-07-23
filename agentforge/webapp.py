@@ -137,7 +137,9 @@ def _redteam_panel() -> str:
     disabled = "" if red_team_configured() else "disabled"
     warn = "" if red_team_configured() else '<div class="warn-note">Set GROQ_API_KEY to enable live attack generation.</div>'
     return (
-        '<div class="rt"><h2 class="sec">Red Team — generate &amp; attack (live)</h2>'
+        '<section class="panel p-rt"><header class="panel-head"><div class="num">3</div>'
+        '<div><h2>Red Team</h2><p class="sub">Generate a novel attack on an open model and execute it '
+        'live — with automatic OpenRouter failover and an independent Judge verdict.</p></div></header>'
         f'{warn}'
         # prepared directive: choose from dropdown -> expands to show the directive -> run
         '<div class="rt-prepared"><label class="muted">Prepared directive '
@@ -151,18 +153,20 @@ def _redteam_panel() -> str:
         '<input type="checkbox" id="rt-hostile"> hostile framing (force Groq refusal → OpenRouter)</label>'
         f'<button id="rt-go" onclick="redTeam()" {disabled}>Generate &amp; attack</button>'
         '<span id="rt-status" class="muted"></span></div>'
-        '<div id="rt-out"></div></div>'
+        '<div id="rt-out"></div></section>'
     )
 
 
 def _regression_panel() -> str:
     return (
-        '<div class="rt"><h2 class="sec">Regression Harness — replay confirmed exploits '
-        '<span class="hint">deterministic · no LLM · asserts the violated invariant, not a string</span></h2>'
+        '<section class="panel p-reg"><header class="panel-head"><div class="num">2</div>'
+        '<div><h2>Regression Harness</h2><p class="sub">Deterministic replay of confirmed exploits '
+        '— no LLM, asserts the violated invariant (not a string), and flags regressions &amp; '
+        'reappearances against the live target.</p></div></header>'
         '<div class="rt-controls">'
         '<button id="reg-go" onclick="runRegression()">Run regression</button>'
         '<span id="reg-status" class="muted"></span></div>'
-        '<div id="reg-out"></div></div>'
+        '<div id="reg-out"></div></section>'
     )
 
 
@@ -427,7 +431,15 @@ select { background:var(--panel); color:var(--text); border:1px solid var(--line
 label.chk { color:var(--muted); font-size:13px; display:flex; gap:6px; align-items:center; }
 .muted { color:var(--muted); font-size:12.5px; } .hint { color:var(--faint); text-transform:none; letter-spacing:0; font-weight:400; }
 .empty { color:var(--muted); border:1px dashed var(--line); border-radius:10px; padding:28px; text-align:center; }
-.rt { margin-top:40px; } .rt-controls { display:flex; gap:10px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
+.panel { position:relative; background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:22px 24px 24px; margin:0 0 22px; }
+.panel::before { content:''; position:absolute; left:0; top:0; bottom:0; width:3px; border-radius:16px 0 0 16px; background:var(--accent); }
+.panel.p-reg::before { background:var(--judge); } .panel.p-rt::before { background:var(--surprise); }
+.panel-head { display:flex; align-items:flex-start; gap:14px; margin:0 0 18px; padding-bottom:16px; border-bottom:1px solid var(--line); }
+.panel-head .num { flex:0 0 auto; width:30px; height:30px; border-radius:9px; display:grid; place-items:center; font-weight:700; font-size:14px; color:var(--accent); border:1px solid var(--line); background:var(--panel-2); }
+.panel.p-reg .panel-head .num { color:var(--judge); } .panel.p-rt .panel-head .num { color:var(--surprise); }
+.panel-head h2 { margin:0; font-size:16px; } .panel-head .sub { margin:3px 0 0; color:var(--muted); font-size:12.5px; max-width:74ch; }
+.panel .tiles { margin-top:6px; }
+.rt-controls { display:flex; gap:10px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
 #rt-out .turn { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 14px; margin-top:8px; }
 #rt-out .turn .lbl { color:var(--accent); font-size:11px; text-transform:uppercase; letter-spacing:.7px; }
 #rt-out .turn.target .lbl { color:var(--ok); }
@@ -467,17 +479,20 @@ details.cases .inv { color:var(--muted); }
   <div class="cfg" id="cfg"></div>
 </div>
 
-<div class="controls">
-  <select id="run-cat"><option value="">all categories</option></select>
-  <label class="chk"><input type="checkbox" id="run-judge"> use Judge</label>
-  <button id="run-btn" onclick="runSuite()">Run attack suite</button>
-  <button class="ghost" onclick="clearRun()">Clear previous run</button>
-  <span id="run-status" class="muted"></span>
-</div>
-
-<details class="cases"><summary>Suite directives / cases (<span id="suite-count">…</span>) — what the attack suite exercises</summary><div id="suite-cases"></div></details>
-
-<div id="console-body">{{BODY}}</div>
+<section class="panel p-eval">
+  <header class="panel-head"><div class="num">1</div>
+    <div><h2>Eval Suite</h2><p class="sub">Deterministic + Judge-scored attacks across the OWASP LLM
+    categories — run the versioned case suite against the live target.</p></div></header>
+  <div class="controls">
+    <select id="run-cat"><option value="">all categories</option></select>
+    <label class="chk"><input type="checkbox" id="run-judge"> use Judge</label>
+    <button id="run-btn" onclick="runSuite()">Run attack suite</button>
+    <button class="ghost" onclick="clearRun()">Clear previous run</button>
+    <span id="run-status" class="muted"></span>
+  </div>
+  <details class="cases"><summary>Suite directives / cases (<span id="suite-count">…</span>) — what the attack suite exercises</summary><div id="suite-cases"></div></details>
+  <div id="console-body">{{BODY}}</div>
+</section>
 {{REG}}
 {{RT}}
 
