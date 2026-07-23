@@ -291,6 +291,10 @@ def read_observation(*, budget_usd: float = 5.0) -> Observation:
     regression DB. Best-effort: missing sources just leave zeros."""
     obs = Observation.empty(budget_usd=budget_usd)
 
+    # Run logs give the coverage signal (attempts per category). Spend/exploits are
+    # left at zero: the budget and kill-switch govern the *fresh* campaign about to
+    # run, not the cumulative history — otherwise historical spend would trip the
+    # budget before a single directive is issued.
     for log in sorted(_RESULTS_DIR.glob("run-*.jsonl")):
         for line in log.read_text(encoding="utf-8").splitlines():
             try:
@@ -298,13 +302,8 @@ def read_observation(*, budget_usd: float = 5.0) -> Observation:
             except json.JSONDecodeError:
                 continue
             st = obs.categories.get(rec.get("category"))
-            if st is None:
-                continue
-            st.attempts += 1
-            if rec.get("result") == "fail":
-                st.exploits += 1
-            st.spend_usd += float((rec.get("cost") or {}).get("usd", 0.0))
-            obs.total_spend_usd += float((rec.get("cost") or {}).get("usd", 0.0))
+            if st is not None:
+                st.attempts += 1
 
     if _REPORTS_DIR.exists():
         for jf in _REPORTS_DIR.glob("AF-*.json"):

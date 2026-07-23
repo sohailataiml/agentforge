@@ -33,6 +33,12 @@ from agentforge.eval_case import load_all_cases
 from agentforge.eval_runner import run_suite, write_results_jsonl
 from agentforge.judge import JUDGE_MODEL
 from agentforge.red_team import build_directive, run_directive
+from agentforge.orchestrator import (
+    next_directive,
+    orchestrate,
+    read_observation,
+    score_categories,
+)
 from agentforge.regression import (
     connect as regression_connect,
     register_from_cases,
@@ -90,6 +96,10 @@ _REGRESSION_STATE: dict[str, Any] = {
     "status": "idle", "started_at": None, "finished_at": None,
     "summary": None, "outcomes": None, "campaign": None, "error": None,
 }
+
+# The orchestrator's autonomous loop (live) is its own background job.
+_ORCH_LOCK = threading.Lock()
+_ORCH_STATE: dict[str, Any] = {"status": "idle", "started_at": None, "finished_at": None, "report": None, "error": None}
 
 
 def _require_token(token: str | None) -> None:
@@ -167,6 +177,20 @@ def _regression_panel() -> str:
         '<button id="reg-go" onclick="runRegression()">Run regression</button>'
         '<span id="reg-status" class="muted"></span></div>'
         '<div id="reg-out"></div></section>'
+    )
+
+
+def _orchestrator_panel() -> str:
+    return (
+        '<section class="panel p-orch"><header class="panel-head"><div class="num">4</div>'
+        '<div><h2>Orchestrator</h2><p class="sub">The strategy layer: it reads observability '
+        'state (coverage, open high-sev findings, regressions), scores the attack categories, and '
+        'hands the Red Team a schema-valid <b>AttackDirective</b> — the autonomous loop.</p></div></header>'
+        '<div class="rt-controls">'
+        '<button id="orch-plan" onclick="planOrchestrator()">Plan next attack (dry-run · free)</button>'
+        '<button id="orch-run" class="ghost" onclick="runOrchestrator()">Run autonomous loop (live)</button>'
+        '<span id="orch-status" class="muted"></span></div>'
+        '<div id="orch-out"></div></section>'
     )
 
 
@@ -405,10 +429,71 @@ def start_regression(x_console_token: str | None = Header(default=None)) -> JSON
     return JSONResponse({"status": "running"})
 
 
+@app.get("/api/orchestrator/plan")
+def orchestrator_plan(budget: float = 2.0) -> JSONResponse:
+    """Free, read-only: read observability state, score the categories, and show the
+    AttackDirective the Orchestrator would hand the Red Team. No execution, no cost."""
+    obs = read_observation(budget_usd=budget)
+    scores = [{"category": s.category, "score": round(s.score, 1), "reasons": s.reasons}
+              for s in score_categories(obs)]
+    directive = next_directive(obs)
+    return JSONResponse({
+        "scores": scores, "directive": directive,
+        "target_version": obs.target_version, "last_seen_version": obs.last_seen_version,
+    })
+
+
+def _regression_runner() -> dict[str, Any]:
+    conn = regression_connect()
+    try:
+        register_from_cases(conn, load_all_cases(_cases_dir()))
+        return to_campaign_result(run_regression(conn))
+    finally:
+        conn.close()
+
+
+def _do_orchestrate(budget: float, max_directives: int, patient_id: str) -> None:
+    try:
+        from agentforge.orchestrator import _live_executor
+
+        obs = read_observation(budget_usd=budget)
+        report = orchestrate(obs, executor=_live_executor(patient_id),
+                             regression_runner=_regression_runner, max_directives=max_directives)
+        _ORCH_STATE.update(status="done", finished_at=datetime.now(timezone.utc).isoformat(), report={
+            "directives": report.directives, "queued": report.queued, "decisions": report.decisions,
+            "exploits": report.exploits, "spend_usd": report.spend_usd, "aborted": report.aborted,
+            "regression": report.regression,
+        })
+    except Exception as exc:  # noqa: BLE001 — surface any loop failure to the UI
+        _ORCH_STATE.update(status="error", finished_at=datetime.now(timezone.utc).isoformat(), error=str(exc))
+    finally:
+        _ORCH_LOCK.release()
+
+
+@app.get("/api/orchestrator/status")
+def orchestrator_status() -> JSONResponse:
+    return JSONResponse(_ORCH_STATE)
+
+
+@app.post("/api/orchestrator/run")
+def start_orchestrator(budget: float = 1.0, max_directives: int = 3, patient_id: str = DEMO_PATIENT_ID,
+                       x_console_token: str | None = Header(default=None)) -> JSONResponse:
+    _require_token(x_console_token)
+    if not red_team_configured():
+        raise HTTPException(status_code=400, detail="Red Team not configured — set GROQ_API_KEY")
+    if not _ORCH_LOCK.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="an orchestration run is already in progress")
+    _ORCH_STATE.update(status="running", started_at=datetime.now(timezone.utc).isoformat(),
+                       finished_at=None, report=None, error=None)
+    threading.Thread(target=_do_orchestrate, args=(budget, max_directives, patient_id), daemon=True).start()
+    return JSONResponse({"status": "running"})
+
+
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
     return (_PAGE.replace("{{CSS}}", DASH_CSS).replace("{{BODY}}", _console_body())
-            .replace("{{REG}}", _regression_panel()).replace("{{RT}}", _redteam_panel()))
+            .replace("{{REG}}", _regression_panel()).replace("{{ORCH}}", _orchestrator_panel())
+            .replace("{{RT}}", _redteam_panel()))
 
 
 _PAGE = """<!doctype html>
@@ -434,6 +519,7 @@ label.chk { color:var(--muted); font-size:13px; display:flex; gap:6px; align-ite
 .panel { position:relative; background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:22px 24px 24px; margin:0 0 22px; }
 .panel::before { content:''; position:absolute; left:0; top:0; bottom:0; width:3px; border-radius:16px 0 0 16px; background:var(--accent); }
 .panel.p-reg::before { background:var(--judge); } .panel.p-rt::before { background:var(--surprise); }
+.panel.p-orch::before { background:var(--ok); } .panel.p-orch .panel-head .num { color:var(--ok); }
 .panel-head { display:flex; align-items:flex-start; gap:14px; margin:0 0 18px; padding-bottom:16px; border-bottom:1px solid var(--line); }
 .panel-head .num { flex:0 0 auto; width:30px; height:30px; border-radius:9px; display:grid; place-items:center; font-weight:700; font-size:14px; color:var(--accent); border:1px solid var(--line); background:var(--panel-2); }
 .panel.p-reg .panel-head .num { color:var(--judge); } .panel.p-rt .panel-head .num { color:var(--surprise); }
@@ -468,6 +554,10 @@ details.cases .inv { color:var(--muted); }
 .reg-table tr.alert td { background:#1a0f0e; }
 .reg-table .inv { color:var(--muted); max-width:360px; }
 .reg-json { margin:10px 0 0; white-space:pre-wrap; word-break:break-word; font-size:12px; color:#c7cede; background:var(--panel-2); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+.scorebar { background:var(--panel-2); border:1px solid var(--line); border-radius:6px; height:10px; width:130px; overflow:hidden; display:inline-block; vertical-align:middle; }
+.scorebar span { display:block; height:100%; background:var(--ok); }
+.orch-decisions { margin:8px 0 0; padding-left:18px; color:var(--muted); font-size:12.5px; }
+.orch-decisions li { margin:3px 0; }
 .warn-note { color:var(--surprise); font-size:12.5px; margin-bottom:10px; }
 .spin { display:inline-block; width:12px; height:12px; border:2px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:spin .7s linear infinite; vertical-align:middle; }
 @keyframes spin { to { transform:rotate(360deg); } }
@@ -495,6 +585,7 @@ details.cases .inv { color:var(--muted); }
 </section>
 {{REG}}
 {{RT}}
+{{ORCH}}
 
 <footer>AgentForge operator console — synthetic demo patients; paid actions gated by operator token.</footer>
 </div>
@@ -716,6 +807,76 @@ function renderRegression(s, status) {
     + `<th>baseline \\u2192 replay</th><th>status</th><th>invariant asserted</th></tr></thead><tbody>${rows}</tbody></table>`
     + `<details class="cases"><summary>CampaignResult (contract emitted to the Orchestrator)</summary>`
     + `<pre class="reg-json">${esc(JSON.stringify(s.campaign || {}, null, 2))}</pre></details>`;
+}
+
+// --- Orchestrator -------------------------------------------------------
+function directiveCard(dir) {
+  if (!dir) return '<div class="empty">No directive — budget spent or nothing worth attacking.</div>';
+  const pc = dir.priority === 'critical' ? 'bad' : (dir.priority === 'high' ? 'err' : 'warn');
+  return `<div class="directive-card">
+    <div class="drow"><span>directive_id</span><b class="mono">${esc(dir.directive_id)}</b></div>
+    <div class="drow"><span>attack category</span><b>${esc(dir.attack_category)}</b></div>
+    <div class="drow"><span>priority</span><b><span class="chip ${pc}">${esc(dir.priority)}</span></b></div>
+    <div class="drow"><span>subcategory</span><b>${esc(dir.subcategory)}</b></div>
+    <div class="drow"><span>OWASP</span><b>${esc((dir.owasp_refs || []).join(', '))}</b></div>
+    <div class="drow"><span>strategy</span><b>${esc(dir.strategy_hint)}</b></div>
+    <div class="drow"><span>token budget · max turns</span><b>${dir.token_budget} · ${dir.max_turns}</b></div>
+  </div>`;
+}
+
+async function planOrchestrator() {
+  const btn = document.getElementById('orch-plan'), status = document.getElementById('orch-status'), out = document.getElementById('orch-out');
+  btn.disabled = true; status.innerHTML = '<span class="spin"></span> reading state &amp; scoring…'; out.innerHTML = '';
+  try {
+    const d = await (await fetch('/api/orchestrator/plan')).json();
+    status.textContent = `target ${d.target_version}`;
+    const max = Math.max(1, ...d.scores.map(s => s.score));
+    const rows = d.scores.map(s => {
+      const r = s.reasons || {};
+      return `<tr><td class="mono">${esc(s.category)}</td>`
+        + `<td><div class="scorebar"><span style="width:${Math.round(100 * s.score / max)}%"></span></div></td>`
+        + `<td>${s.score.toFixed(1)}</td>`
+        + `<td class="inv">coverage ${r.coverage || 0} · high-sev ${r.high_sev || 0} · regression ${r.regression || 0}</td></tr>`;
+    }).join('');
+    out.innerHTML = '<div class="atk-label">category scores — highest is attacked next</div>'
+      + `<table class="reg-table"><thead><tr><th>category</th><th></th><th>score</th><th>why</th></tr></thead><tbody>${rows}</tbody></table>`
+      + '<div class="atk-label" style="margin-top:14px">emitted AttackDirective → handed to the Red Team</div>'
+      + directiveCard(d.directive);
+  } catch (e) { status.textContent = 'error: ' + e; }
+  btn.disabled = false;
+}
+
+async function runOrchestrator() {
+  const btn = document.getElementById('orch-run'), status = document.getElementById('orch-status');
+  btn.disabled = true;
+  const r = await fetch('/api/orchestrator/run', {method:'POST', headers: authHeaders()});
+  if (r.status === 401) { status.textContent = 'operator token required/invalid'; btn.disabled=false; return; }
+  if (r.status === 409) { status.textContent = 'an orchestration run is already in progress'; btn.disabled=false; return; }
+  if (!r.ok) { const d = await r.json().catch(()=>({})); status.textContent = 'error: ' + (d.detail||'failed'); btn.disabled=false; return; }
+  status.innerHTML = '<span class="spin"></span> running the autonomous loop (score → directive → Red Team → Judge)…';
+  pollOrchestrator(btn, status);
+}
+
+async function pollOrchestrator(btn, status) {
+  const s = await (await fetch('/api/orchestrator/status')).json();
+  if (s.status === 'running') { setTimeout(() => pollOrchestrator(btn, status), 2500); return; }
+  btn.disabled = false;
+  if (s.status === 'error') { status.textContent = 'orchestration error: ' + s.error; return; }
+  const rep = s.report || {}, out = document.getElementById('orch-out');
+  const dirs = rep.directives || [];
+  status.textContent = `done — ${dirs.length} directive(s) issued, ${rep.exploits || 0} exploit(s), $${(rep.spend_usd || 0).toFixed(4)}` + (rep.aborted ? ' [ABORTED]' : '');
+  const tiles = '<div class="tiles">'
+    + tile(dirs.length, 'directives issued')
+    + tile(rep.exploits || 0, 'exploits found', (rep.exploits ? 'bad' : 'ok'))
+    + tile((rep.queued || []).length, 'queued (rate-limited)', ((rep.queued || []).length ? 'warn' : ''))
+    + tile('$' + (rep.spend_usd || 0).toFixed(4), 'spend')
+    + '</div>';
+  const cards = dirs.map((dir, i) => `<div class="atk-label">hand-off ${i + 1} → Red Team</div>${directiveCard(dir)}`).join('');
+  const reg = rep.regression ? '<div class="atk-label" style="margin-top:14px">regression triggered (target changed)</div>'
+    + `<pre class="reg-json">${esc(JSON.stringify(rep.regression, null, 2))}</pre>` : '';
+  const decisions = (rep.decisions || []).map(x => `<li>${esc(x)}</li>`).join('');
+  out.innerHTML = tiles + cards + reg
+    + (decisions ? `<div class="atk-label" style="margin-top:14px">loop decisions</div><ul class="orch-decisions">${decisions}</ul>` : '');
 }
 
 loadConfig(); loadDirectives(); loadCases();
