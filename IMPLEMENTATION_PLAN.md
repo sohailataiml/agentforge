@@ -249,9 +249,11 @@ feed outcomes back → re-score); regression suite re-runs on target change.
 - [ ] Observability dashboard/queries answering: cases per category · pass-fail rate
       by category & system version · resilience trend over time · open/in-progress/
       resolved vulns · run cost + scaling rate · per-agent action timeline.
-- [ ] `AI_COST_ANALYSIS.md`: actual dev spend + projections at 100/1K/10K/100K runs,
-      with the architectural change required at each tier (not token×n).
-- [ ] `USERS.md`: users, workflows, use cases, justification for automation.
+- [x] `AI_COST_ANALYSIS.md`: measured dev spend (<~$5) + unit economics (Opus Judge ≈ 95%
+      of per-attempt cost) + projections at 100/1K/10K/100K runs with the architectural
+      change each tier forces (gate → tier+batch → self-host+sample), not token×n.
+- [x] `USERS.md`: 5 user roles, 4 core workflows, use cases, and the automate-breadth /
+      human-judgment-gates justification.
 - [ ] Contract tests (both sides of each boundary) + versioning + migration notes.
 - [ ] ATO-style evidence packet: architecture + data-flow diagrams, auth model,
       dependency versions, self-scan results, eval evidence, sample postmortem.
