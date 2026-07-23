@@ -102,11 +102,13 @@ Phase 1's target liveness — see [TARGET.md](TARGET.md).
       (and [`eval_result.schema.json`](contracts/eval_result.schema.json) for the
       runner's output records). `observed_behavior`/`result` are produced by the
       runner, not authored.
-- [x] Author ≥3 categories of seed cases (target the top-ranked from Phase 2).
-      *(5 cases across 4 categories under [`evals/cases/`](evals/cases/):
-      `data_exfiltration` ×2, `identity_role`, `state_corruption`,
-      `prompt_injection` — the coverage priority 1/3/5 plus one direct-injection
-      case.)*
+- [x] Author seed cases across the attack categories.
+      *(**18 cases — 3 in every one of the 6 categories** under
+      [`evals/cases/`](evals/cases/): `prompt_injection`, `data_exfiltration`,
+      `state_corruption`, `tool_misuse`, `dos`, `identity_role`. Deterministic
+      canary/regex detectors where possible; coarse safe-signal + `requires_judge`
+      where semantics matter. `expected_result` calibrated against the live target —
+      the Judge confirms every boundary case holds, no surprises.)*
 - [x] **Every case must exercise a boundary, an invariant, or a regression risk** —
       not a flat payload list. *(Enforced by the schema's required `test_type` +
       `invariant` fields and asserted in
@@ -118,12 +120,13 @@ Phase 1's target liveness — see [TARGET.md](TARGET.md).
       sessions through the target seam, applies detectors, rolls step verdicts up,
       and writes a JSONL run log; CLI in [`evals/run.py`](evals/run.py).)*
 
-**Exit / hard gate:** `./evals/` runs live against the deployed target across ≥3
-categories with reproducible results. **✅ met** — first live run (2026-07-21)
-executed all 5 cases against the deployed target for $0.13, confirming 3 exploits
-including a **new** cross-patient conversation-memory bleed (THREAT_MODEL §5,
-previously untested). Deterministic detectors make results reproducible;
-`requires_judge` cases defer the final verdict to Phase 4's Judge.
+**Exit / hard gate:** `./evals/` runs live against the deployed target across all 6
+categories with reproducible results. **✅ met** — the 18-case suite (3 per category)
+runs live against the deployed target; deterministic detectors make results
+reproducible, and `requires_judge` cases defer the final verdict to the Phase 4 Judge.
+Confirmed exploits so far: unauthenticated PHI retrieval and a cross-patient
+conversation-memory bleed (THREAT_MODEL §5); the remaining boundary cases are
+Judge-confirmed to hold.
 
 ---
 

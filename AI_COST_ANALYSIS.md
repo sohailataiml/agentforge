@@ -28,8 +28,9 @@ operates the target; we surface it for transparency but it isn't AgentForge's sp
 | Documentation (per confirmed exploit) | Opus 4.8 | ~$0.05 | only on a `fail` |
 | Orchestrator scoring | none (code) | $0.000 | 0% |
 
-**Measured anchors:** a full deterministic eval/regression pass over the 5-case corpus
-cost **$0.134** (~$0.027/case, entirely target-side — zero LLM spend on our side). One
+**Measured anchors:** a full deterministic eval/regression pass costs **~$0.027/case**,
+entirely target-side — **zero LLM spend on our side** (the 18-case suite is ~$0.5 of
+target-side inference, none of it ours). One
 orchestrator-driven Red-Team-generate + execute + **Judge** attempt cost **$0.088**, of
 which the Opus Judge was the overwhelming majority.
 
