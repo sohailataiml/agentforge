@@ -846,10 +846,10 @@ async function planOrchestrator() {
         + `<td>${s.score.toFixed(1)}</td>`
         + `<td class="inv">coverage ${r.coverage || 0} · high-sev ${r.high_sev || 0} · regression ${r.regression || 0}</td></tr>`;
     }).join('');
+    const next = d.directive ? esc(d.directive.attack_category) : '—';
     out.innerHTML = '<div class="atk-label">category scores — highest is attacked next</div>'
       + `<table class="reg-table"><thead><tr><th>category</th><th></th><th>score</th><th>why</th></tr></thead><tbody>${rows}</tbody></table>`
-      + '<div class="atk-label" style="margin-top:14px">emitted AttackDirective → handed to the Red Team</div>'
-      + directiveCard(d.directive);
+      + `<div class="muted" style="margin-top:12px">Next up: <b>${next}</b>. Run the loop to hand the Red Team its AttackDirective(s).</div>`;
   } catch (e) { status.textContent = 'error: ' + e; }
   btn.disabled = false;
 }
