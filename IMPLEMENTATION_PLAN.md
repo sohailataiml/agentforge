@@ -199,9 +199,11 @@ and non-live-tested.
 
 **Goal:** strategy layer + deterministic replay.
 
-- [ ] **Orchestrator**: reads observability state, scores categories (coverage gaps,
-      open high-sev, regressions, spend/signal), emits `AttackDirective`, enforces
-      budgets, triggers regression runs on target change.
+- [x] **Orchestrator** (`agentforge/orchestrator.py`): reads observability state (run
+      logs + report corpus + regression DB), scores categories (coverage gaps, open
+      high-sev, regressions), emits schema-valid `AttackDirective`s, enforces a spend
+      budget, and triggers a regression run on target-version change. Pure, injectable,
+      unit-tested; CLI wires a live Red Team + Judge executor. `python -m agentforge.orchestrator`.
 - [x] **Regression Harness** (deterministic, no LLM) — `agentforge/regression.py`:
       stores confirmed exploits in a versioned SQLite corpus; replays the exact
       sequences via `run_case` (detectors, no Judge); asserts the *violated invariant*,
@@ -209,10 +211,14 @@ and non-live-tested.
       (regressed / reproduces / fixed / stable) and against the previous run to flag
       **reappearing** vulns; emits a contract-valid `CampaignResult`. Runs credit-free.
       `python -m agentforge.regression`.
-- [ ] Spend-rate monitor + kill-switch for low-signal campaigns.
-- [ ] Cost/rate-limit handling: backoff → queue → abort, per external API.
+- [x] Spend-rate monitor + **kill-switch** for low-signal campaigns (`apply_kill_switch`:
+      trips a category once it has spent enough with signal-yield below threshold and
+      nothing urgent open; killed categories are excluded from scoring).
+- [x] Cost/rate-limit handling: **backoff → queue → abort** in the loop (exponential
+      backoff + defer/queue on `RateLimited`, abort on a sustained streak).
 
-**Exit:** Orchestrator drives an autonomous loop; regression suite re-runs on change.
+**Exit:** ✅ Orchestrator drives an autonomous loop (score → emit directive → execute →
+feed outcomes back → re-score); regression suite re-runs on target change.
 
 ---
 

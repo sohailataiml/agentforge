@@ -442,6 +442,77 @@ replays the real corpus against the deployed target.
 
 ---
 
+## Orchestrator — Architecture (as built)
+
+`agentforge/orchestrator.py` — **deterministic, no LLM.** The strategy layer that
+turns observability state into the next action and drives the autonomous loop.
+
+**Observability in.** `read_observation` assembles an `Observation` from three
+sources, best-effort: the eval **run logs** (attempts, confirmed exploits, spend
+per category), the **report corpus** (`reports/AF-*.json` → open critical/high
+findings per category), and the **regression DB** (current vs previous target
+version, and regression/reappearance counts per category).
+
+**Scoring.** `score_categories` ranks the six categories by a weighted sum, tuned
+so **regression ≫ open-high-sev > coverage-gap**: a broken defense is always most
+urgent (`_W_REGRESSION=10`), a known-weak category outranks exploring a fresh one
+(`_W_HIGHSEV=4`), and an unexplored category still draws attention
+(`_W_COVERAGE=1`, capped at `_MIN_ATTEMPTS`). Killed categories are excluded.
+
+**Directive out.** `next_directive` emits the top category as a schema-valid
+`AttackDirective` (validated against the contract) with a priority derived from
+state (`critical` if regressed, `high` if weak, else `medium`), or `None` when the
+budget is spent or nothing scores.
+
+**Loop control** (`orchestrate`, injectable executor):
+1. If the target version changed since last seen, run the Regression Harness first.
+2. Emit a directive, execute it, and **feed the outcome back** into the observation
+   (attempts, exploits, spend) so scores shift as categories are exhausted.
+3. **Budget:** stop once `total_spend_usd` reaches the cap.
+4. **Kill-switch** (`apply_kill_switch`): a category that has spent past
+   `_KILL_MIN_SPEND_USD` with yield below `_KILL_MIN_YIELD` and nothing urgent open
+   is killed and never issued again.
+5. **Rate limits — backoff → queue → abort:** each `RateLimited` backs off
+   exponentially and defers (queues) the directive; a sustained streak aborts the
+   loop cleanly.
+
+The CLI wires a live executor (Red Team `run_directive` + Judge) and the Regression
+Harness; `--dry-run` prints the scores + next directive with no spend. Tests
+(`tests/test_orchestrator.py`) cover scoring order, the kill-switch, budget stop,
+regression-on-change, and the backoff/queue/abort sequence with a stub executor.
+
+---
+
+## Documentation Agent — Architecture (as built)
+
+`agentforge/documentation.py` — turns a confirmed exploit into a professional,
+reproducible `VulnReport` (contracts/vuln_report.schema.json).
+
+**Source of truth.** Only a confirmed (`result == "fail"`) Verdict may be
+documented (`finding_from_verdict` refuses anything else). Evidence — the attack
+sequence and the target transcript — is captured verbatim from the live run.
+
+**Deterministic scaffold + authored prose.** Ids, severity, the minimal (dedup'd)
+attack sequence, status, the fix-validation link, and timestamps are assembled in
+code; only the prose (title, clinical impact, reproduction steps, observed/expected
+behaviour, remediation) is authored — by the frontier model
+(`claude-opus-4-8`, adaptive thinking, structured output) grounded strictly in the
+evidence, with a deterministic fallback so a report is always producible.
+
+**Gates.** Data-quality: unique `AF-YYYY-NNNN` id, uuid attempt, non-empty prose,
+no duplicate attack sequence across the corpus. **Human approval:** a `critical`
+report is contract-invalid unless `human_approved` — `build_vuln_report` and
+`publish` both refuse an unapproved critical, so the human-in-the-loop gate is
+enforced at the contract boundary. **No autonomous remediation:**
+`fix_validation.validated` starts false and is only flipped by the deterministic
+Regression Harness once a fix is proven.
+
+`generate_reports.py` mines confirmed findings from both the eval suite (Judge
+scoring every case) and the Red Team (judged directives), dedupes by attack
+sequence, and publishes JSON + Markdown to `reports/`. See `reports/README.md`.
+
+---
+
 ## Framework & Infrastructure
 
 - **Orchestration framework**: LangGraph (explicit graph of agent nodes with typed
