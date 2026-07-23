@@ -202,10 +202,13 @@ and non-live-tested.
 - [ ] **Orchestrator**: reads observability state, scores categories (coverage gaps,
       open high-sev, regressions, spend/signal), emits `AttackDirective`, enforces
       budgets, triggers regression runs on target change.
-- [ ] **Regression Harness** (deterministic, no LLM): stores confirmed exploits in
-      the versioned SQLite exploit DB; replays exact sequences; asserts the *violated
-      invariant*, not string equality; flags reappearing vulns + cross-category
-      regressions.
+- [x] **Regression Harness** (deterministic, no LLM) — `agentforge/regression.py`:
+      stores confirmed exploits in a versioned SQLite corpus; replays the exact
+      sequences via `run_case` (detectors, no Judge); asserts the *violated invariant*,
+      not string equality; classifies each replay against the frozen baseline
+      (regressed / reproduces / fixed / stable) and against the previous run to flag
+      **reappearing** vulns; emits a contract-valid `CampaignResult`. Runs credit-free.
+      `python -m agentforge.regression`.
 - [ ] Spend-rate monitor + kill-switch for low-signal campaigns.
 - [ ] Cost/rate-limit handling: backoff → queue → abort, per external API.
 

@@ -386,6 +386,62 @@ non-live tests.
 
 ---
 
+## Regression Harness — Architecture (as built)
+
+`agentforge/regression.py` — **deterministic, no LLM.** Once an exploit is
+confirmed, it must never silently come back. The harness freezes confirmed
+exploits and replays them on demand (or when the Orchestrator sees a target-version
+change), asserting the *violated invariant* rather than an output string.
+
+**Corpus (versioned SQLite).** `register_from_cases` freezes every
+`add_to_regression` case into a self-contained row (`case_to_dict` → JSON), keyed
+by `case_id`, with the case's `expected_result` as the immutable **baseline** and
+`first_seen_at`/`first_version` stamped once. Re-registering is idempotent and
+preserves the first-seen provenance. Three tables: `exploits` (the corpus + current
+status), `runs` (one row per campaign, with target version + counts), and
+`run_results` (per-exploit result each run — the history that makes reappearance
+detectable). Default DB lives under the git-ignored `evals/results/`.
+
+**Replay is deterministic.** Each exploit is rebuilt with `EvalCase.from_dict` and
+run through `run_case` **with no Judge** — pure detectors, no model on our side.
+The target is unauthenticated, so a full replay costs **no API credits** (only the
+target's own spend is reported). `replay_fn` is injectable so the whole classifier
+is unit-tested without a network.
+
+**Invariant assertion, not string equality.** The detector encodes the invariant
+(e.g. "PHI identifiers must not appear for an unauthenticated caller"). A fix that
+merely reworded the old leak still trips the detector — so a passing replay means
+the *invariant* now holds, not that a string changed.
+
+**Classification** (`classify(baseline, current, previous)`), by a security rank
+`pass < partial < fail`:
+
+| vs baseline | vs previous run | status | alert? |
+|---|---|---|---|
+| worse | — | `regressed` (a defense broke) | ✔ |
+| better | — | `fixed` (exploit no longer reproduces) | — |
+| equal, baseline fail | prev was cleaner | `reproduces` + `reappeared` | ✔ |
+| equal, baseline fail | — | `reproduces` (still vulnerable) | — |
+| equal, baseline pass | — | `stable` (defense holds) | — |
+| unrunnable | — | `error` | — |
+
+`reappeared` is the cross-run signal: an exploit that was `fixed` last run and
+`fail`s again this run is flagged even though its status vs baseline is only
+"reproduces". Alerts = regressions ∪ reappearances.
+
+**Output.** `to_campaign_result` emits a `CampaignResult` (validated against
+`contracts/campaign_result.schema.json`) for the Orchestrator: `attempts_run`,
+`confirmed_exploits` (still reproduce), `regressions_detected` (alert count),
+`total_cost`, `signal_yield`. The CLI (`python -m agentforge.regression`) exits
+non-zero when any alert is found, so CI / the Orchestrator can gate on it.
+
+**Tests.** `tests/test_regression.py` — corpus round-trip, idempotent registration,
+every classification transition, cross-run regression + reappearance, boundary
+regression, and contract-valid `CampaignResult`, all non-live; a `live` test
+replays the real corpus against the deployed target.
+
+---
+
 ## Framework & Infrastructure
 
 - **Orchestration framework**: LangGraph (explicit graph of agent nodes with typed
