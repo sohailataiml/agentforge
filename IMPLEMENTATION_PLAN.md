@@ -259,8 +259,11 @@ feed outcomes back → re-score); regression suite re-runs on target change.
       producer emits each message, it's schema-validated, then the real consumer parses it
       (7 boundaries + schema-version pinning). Versioning + migration notes in
       `contracts/VERSIONING.md`.
-- [ ] ATO-style evidence packet: architecture + data-flow diagrams, auth model,
-      dependency versions, self-scan results, eval evidence, sample postmortem.
+- [x] ATO-style evidence packet (`ATO_EVIDENCE.md`): system categorization, authorization
+      boundary + data-flow diagrams (mermaid), auth/access-control model, dependency
+      inventory (4 pinned runtime deps), self-scan results (bandit 0-High + 4 triaged
+      false positives, clean secret scan, ruff, 126 tests), eval evidence, and a sample
+      postmortem (AF-2026-0001) + POA&M.
 - [x] Baseline perf profile (`agentforge/perf.py` + `PERF_PROFILE.md`): framework
       overhead 2.8 ms/case & 0.5 MB (352 cases/s, mock target), detector 4.6 µs/op,
       regression 93 replays/s, observability 10k records ≈30–60 ms; live latency target
