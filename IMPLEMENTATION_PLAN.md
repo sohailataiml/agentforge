@@ -254,7 +254,10 @@ feed outcomes back → re-score); regression suite re-runs on target change.
       change each tier forces (gate → tier+batch → self-host+sample), not token×n.
 - [x] `USERS.md`: 5 user roles, 4 core workflows, use cases, and the automate-breadth /
       human-judgment-gates justification.
-- [ ] Contract tests (both sides of each boundary) + versioning + migration notes.
+- [x] Contract tests (both sides of each boundary) — `tests/test_contracts.py`: the real
+      producer emits each message, it's schema-validated, then the real consumer parses it
+      (7 boundaries + schema-version pinning). Versioning + migration notes in
+      `contracts/VERSIONING.md`.
 - [ ] ATO-style evidence packet: architecture + data-flow diagrams, auth model,
       dependency versions, self-scan results, eval evidence, sample postmortem.
 - [ ] Baseline perf profile (CPU/mem/latency/throughput on 100 cases + full
