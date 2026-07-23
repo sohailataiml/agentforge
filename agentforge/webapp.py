@@ -534,7 +534,14 @@ label.chk { color:var(--muted); font-size:13px; display:flex; gap:6px; align-ite
 #rt-out .turn.verdict, #orch-out .turn.verdict { border-color:var(--judge); }
 #rt-out .turn.verdict .lbl, #orch-out .turn.verdict .lbl { color:var(--judge); }
 #rt-out .turn.verdict .vhead, #orch-out .turn.verdict .vhead { margin-bottom:6px; font-size:12.5px; color:var(--muted); }
-#orch-out .orch-attempts { margin:2px 0 14px; padding-left:12px; border-left:2px solid var(--line); }
+#orch-out .orch-attempts { margin:2px 0 4px; padding-left:12px; border-left:2px solid var(--line); }
+.orch-item { border:1px solid var(--line); border-radius:10px; margin-top:10px; background:var(--panel); overflow:hidden; }
+.orch-item > summary { cursor:pointer; list-style:none; padding:12px 14px; font-size:13px; color:var(--text); display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.orch-item > summary::-webkit-details-marker { display:none; }
+.orch-item[open] > summary { border-bottom:1px solid var(--line); background:var(--panel-2); }
+.orch-item .oh-arrow { display:inline-block; color:var(--muted); transition:transform .15s; }
+.orch-item[open] .oh-arrow { transform:rotate(90deg); }
+.orch-item .orch-body { padding:4px 14px 14px; }
 .rt-prepared { margin-bottom:6px; }
 .rt-adhoc-label { margin:10px 0 4px; }
 .directive-card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-top:10px; max-width:560px; }
@@ -874,10 +881,13 @@ async function pollOrchestrator(btn, status) {
     + '</div>';
   const cards = results.map((res, i) => {
     const n = res.exploits || 0;
+    const dir = res.directive;
     const attempts = (res.attempts || []).map(renderOrchAttempt).join('')
       || '<div class="muted" style="margin:6px 0 0">no usable attack (dropped by the egress screen)</div>';
-    return `<div class="atk-label" style="margin-top:14px">hand-off ${i + 1} → Red Team — ${n} exploit${n === 1 ? '' : 's'}</div>`
-      + directiveCard(res.directive) + `<div class="orch-attempts">${attempts}</div>`;
+    const chip = n > 0 ? `<span class="chip bad">${n} exploit${n === 1 ? '' : 's'}</span>` : '<span class="chip ok">held</span>';
+    return `<details class="orch-item"${n > 0 ? ' open' : ''}>`
+      + `<summary><span class="oh-arrow">\\u25b8</span> hand-off ${i + 1} → Red Team · <b>${esc(dir.attack_category)}</b> · ${esc(dir.priority)} ${chip}</summary>`
+      + `<div class="orch-body">${directiveCard(dir)}<div class="orch-attempts">${attempts}</div></div></details>`;
   }).join('');
   const reg = rep.regression ? '<div class="atk-label" style="margin-top:14px">regression triggered (target changed)</div>'
     + `<pre class="reg-json">${esc(JSON.stringify(rep.regression, null, 2))}</pre>` : '';
