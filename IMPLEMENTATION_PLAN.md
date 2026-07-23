@@ -246,9 +246,10 @@ feed outcomes back → re-score); regression suite re-runs on target change.
 
 **Goal:** the CISO-defensible finish.
 
-- [ ] Observability dashboard/queries answering: cases per category · pass-fail rate
-      by category & system version · resilience trend over time · open/in-progress/
-      resolved vulns · run cost + scaling rate · per-agent action timeline.
+- [x] Observability dashboard/queries — the web console (live) + `agentforge/observability.py`
+      (headless CLI + tested queries) answering all six: cases per category · pass-fail rate
+      by category & system version · resilience trend over time · open/in-progress/resolved
+      vulns · run cost + scaling rate · per-agent action timeline. See `OBSERVABILITY.md`.
 - [x] `AI_COST_ANALYSIS.md`: measured dev spend (<~$5) + unit economics (Opus Judge ≈ 95%
       of per-attempt cost) + projections at 100/1K/10K/100K runs with the architectural
       change each tier forces (gate → tier+batch → self-host+sample), not token×n.
