@@ -220,14 +220,17 @@ and non-live-tested.
 
 **Goal:** confirmed exploits → professional reports, with human gates.
 
-- [ ] Documentation Agent consumes confirmed `Verdict`s → `VulnReport` (schema-valid,
-      data-quality-checked: unique ID, required fields, no dup attack sequences).
-- [ ] ≥3 distinct vulnerability reports produced (final requirement).
-- [ ] **Human approval gate** before critical-severity reports publish; **no
-      autonomous remediation** to the live target.
-- [ ] Triage exercise: simulated scan report with ≥10 findings across
-      critical/high/medium/false-positive; document validate/remediate/defer/document
-      decisions per finding.
+- [x] Documentation Agent (`agentforge/documentation.py`) consumes confirmed `Verdict`s →
+      `VulnReport` (schema-valid, data-quality-checked: unique ID, uuid attempt, non-dup
+      attack sequences). Prose authored by the frontier model with a deterministic fallback.
+- [x] **4 distinct vulnerability reports** produced in `reports/` across 3 categories
+      (data_exfiltration ×2 vectors, state_corruption, identity_role) via
+      `python -m agentforge.generate_reports` (eval-suite + Red Team confirmed findings).
+- [x] **Human approval gate** — a critical report is contract-invalid unless `human_approved`;
+      `build_vuln_report`/`publish` refuse unapproved criticals. **No autonomous remediation**
+      (`fix_validation.validated` only flipped by the Regression Harness).
+- [x] Triage exercise (`TRIAGE_EXERCISE.md`): 12-finding simulated scan across
+      critical/high/medium/low/false-positive with validate/remediate/defer/document decisions.
 
 **Exit:** reports a senior engineer could reproduce and fix from text alone; gates enforced.
 
