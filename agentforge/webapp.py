@@ -460,7 +460,7 @@ def _do_orchestrate(budget: float, max_directives: int, patient_id: str) -> None
         report = orchestrate(obs, executor=_live_executor(patient_id),
                              regression_runner=_regression_runner, max_directives=max_directives)
         _ORCH_STATE.update(status="done", finished_at=datetime.now(timezone.utc).isoformat(), report={
-            "directives": report.directives, "queued": report.queued, "decisions": report.decisions,
+            "results": report.results, "queued": report.queued, "decisions": report.decisions,
             "exploits": report.exploits, "spend_usd": report.spend_usd, "aborted": report.aborted,
             "regression": report.regression,
         })
@@ -526,14 +526,15 @@ label.chk { color:var(--muted); font-size:13px; display:flex; gap:6px; align-ite
 .panel-head h2 { margin:0; font-size:16px; } .panel-head .sub { margin:3px 0 0; color:var(--muted); font-size:12.5px; max-width:74ch; }
 .panel .tiles { margin-top:6px; }
 .rt-controls { display:flex; gap:10px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
-#rt-out .turn { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 14px; margin-top:8px; }
-#rt-out .turn .lbl { color:var(--accent); font-size:11px; text-transform:uppercase; letter-spacing:.7px; }
-#rt-out .turn.target .lbl { color:var(--ok); }
-#rt-out .turn.fallback { border-color:var(--surprise); background:#1a1405; }
-#rt-out .turn.fallback .lbl { color:var(--surprise); }
-#rt-out .turn.verdict { border-color:var(--judge); }
-#rt-out .turn.verdict .lbl { color:var(--judge); }
-#rt-out .turn.verdict .vhead { margin-bottom:6px; font-size:12.5px; color:var(--muted); }
+#rt-out .turn, #orch-out .turn { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 14px; margin-top:8px; }
+#rt-out .turn .lbl, #orch-out .turn .lbl { color:var(--accent); font-size:11px; text-transform:uppercase; letter-spacing:.7px; }
+#rt-out .turn.target .lbl, #orch-out .turn.target .lbl { color:var(--ok); }
+#rt-out .turn.fallback, #orch-out .turn.fallback { border-color:var(--surprise); background:#1a1405; }
+#rt-out .turn.fallback .lbl, #orch-out .turn.fallback .lbl { color:var(--surprise); }
+#rt-out .turn.verdict, #orch-out .turn.verdict { border-color:var(--judge); }
+#rt-out .turn.verdict .lbl, #orch-out .turn.verdict .lbl { color:var(--judge); }
+#rt-out .turn.verdict .vhead, #orch-out .turn.verdict .vhead { margin-bottom:6px; font-size:12.5px; color:var(--muted); }
+#orch-out .orch-attempts { margin:2px 0 14px; padding-left:12px; border-left:2px solid var(--line); }
 .rt-prepared { margin-bottom:6px; }
 .rt-adhoc-label { margin:10px 0 4px; }
 .directive-card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-top:10px; max-width:560px; }
@@ -547,7 +548,7 @@ details.cases table { width:100%; border-collapse:collapse; margin-top:10px; fon
 details.cases td, details.cases th { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
 details.cases th { color:var(--faint); font-size:11px; text-transform:uppercase; letter-spacing:.6px; }
 details.cases .inv { color:var(--muted); }
-#rt-out pre { margin:6px 0 0; white-space:pre-wrap; word-break:break-word; font-size:12.5px; color:#c7cede; }
+#rt-out pre, #orch-out .turn pre { margin:6px 0 0; white-space:pre-wrap; word-break:break-word; font-size:12.5px; color:#c7cede; }
 .reg-table { width:100%; border-collapse:collapse; margin-top:12px; font-size:12.5px; }
 .reg-table td, .reg-table th { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
 .reg-table th { color:var(--faint); font-size:11px; text-transform:uppercase; letter-spacing:.6px; }
@@ -863,20 +864,43 @@ async function pollOrchestrator(btn, status) {
   btn.disabled = false;
   if (s.status === 'error') { status.textContent = 'orchestration error: ' + s.error; return; }
   const rep = s.report || {}, out = document.getElementById('orch-out');
-  const dirs = rep.directives || [];
-  status.textContent = `done — ${dirs.length} directive(s) issued, ${rep.exploits || 0} exploit(s), $${(rep.spend_usd || 0).toFixed(4)}` + (rep.aborted ? ' [ABORTED]' : '');
+  const results = rep.results || [];
+  status.textContent = `done — ${results.length} directive(s) issued, ${rep.exploits || 0} exploit(s), $${(rep.spend_usd || 0).toFixed(4)}` + (rep.aborted ? ' [ABORTED]' : '');
   const tiles = '<div class="tiles">'
-    + tile(dirs.length, 'directives issued')
+    + tile(results.length, 'directives issued')
     + tile(rep.exploits || 0, 'exploits found', (rep.exploits ? 'bad' : 'ok'))
     + tile((rep.queued || []).length, 'queued (rate-limited)', ((rep.queued || []).length ? 'warn' : ''))
     + tile('$' + (rep.spend_usd || 0).toFixed(4), 'spend')
     + '</div>';
-  const cards = dirs.map((dir, i) => `<div class="atk-label">hand-off ${i + 1} → Red Team</div>${directiveCard(dir)}`).join('');
+  const cards = results.map((res, i) => {
+    const n = res.exploits || 0;
+    const attempts = (res.attempts || []).map(renderOrchAttempt).join('')
+      || '<div class="muted" style="margin:6px 0 0">no usable attack (dropped by the egress screen)</div>';
+    return `<div class="atk-label" style="margin-top:14px">hand-off ${i + 1} → Red Team — ${n} exploit${n === 1 ? '' : 's'}</div>`
+      + directiveCard(res.directive) + `<div class="orch-attempts">${attempts}</div>`;
+  }).join('');
   const reg = rep.regression ? '<div class="atk-label" style="margin-top:14px">regression triggered (target changed)</div>'
     + `<pre class="reg-json">${esc(JSON.stringify(rep.regression, null, 2))}</pre>` : '';
   const decisions = (rep.decisions || []).map(x => `<li>${esc(x)}</li>`).join('');
   out.innerHTML = tiles + cards + reg
     + (decisions ? `<div class="atk-label" style="margin-top:14px">loop decisions</div><ul class="orch-decisions">${decisions}</ul>` : '');
+}
+
+function renderOrchAttempt(a) {
+  let h = '';
+  if (a.fell_back) h += '<div class="turn fallback"><div class="lbl">\\u26a0 primary refused \\u2192 OpenRouter fallback</div></div>';
+  (a.attack || []).forEach(t => h += `<div class="turn"><div class="lbl">attack · ${esc(t.role)}</div><pre>${esc(t.content)}</pre></div>`);
+  (a.transcript || []).forEach(t => h += `<div class="turn target"><div class="lbl">target · ${esc(t.role)}</div><pre>${esc(t.content)}</pre></div>`);
+  const v = a.verdict;
+  if (v) {
+    const cls = v.result === 'fail' ? 'bad' : (v.result === 'pass' ? 'ok' : 'warn');
+    const label = v.result === 'fail' ? 'EXPLOIT — target failed' : (v.result === 'pass' ? 'held' : 'partial');
+    const gate = v.escalate_to_human ? ' · escalated to human' : '';
+    h += `<div class="turn verdict"><div class="lbl">judge verdict</div>`
+      + `<div class="vhead"><span class="chip ${cls}">${label}</span> confidence ${(v.confidence || 0).toFixed(2)} · severity ${esc(v.severity || '')}${gate}</div>`
+      + `<pre>${esc(v.rationale || '')}</pre></div>`;
+  }
+  return h;
 }
 
 loadConfig(); loadDirectives(); loadCases();

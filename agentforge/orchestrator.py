@@ -202,6 +202,7 @@ class ExecutionOutcome:
     exploits: int
     spend_usd: float
     detail: str = ""
+    attempts: list[dict[str, Any]] = field(default_factory=list)  # per-attempt attack/transcript/verdict
 
 
 @dataclass
@@ -209,6 +210,7 @@ class OrchestrationReport:
     started_at: str
     finished_at: str = ""
     directives: list[dict[str, Any]] = field(default_factory=list)
+    results: list[dict[str, Any]] = field(default_factory=list)  # directive paired with its live Red Team result
     queued: list[dict[str, Any]] = field(default_factory=list)
     decisions: list[str] = field(default_factory=list)
     exploits: int = 0
@@ -272,6 +274,10 @@ def orchestrate(
         st.spend_usd += outcome.spend_usd
         obs.total_spend_usd += outcome.spend_usd
         report.directives.append(directive)
+        report.results.append({
+            "directive": directive, "exploits": outcome.exploits,
+            "spend_usd": outcome.spend_usd, "attempts": outcome.attempts,
+        })
         report.exploits += outcome.exploits
         report.spend_usd += outcome.spend_usd
         killed = apply_kill_switch(obs)
@@ -368,7 +374,14 @@ def _live_executor(patient_id: str) -> Callable[[dict[str, Any]], ExecutionOutco
                 raise RateLimited(str(exc)) from exc
             raise
         exploits = sum(1 for r in campaign.records if r.verdict and r.verdict["result"] == "fail")
-        return ExecutionOutcome(exploits=exploits, spend_usd=campaign.total_cost.get("usd", 0.0))
+        attempts = [
+            {
+                "attack": r.attempt["input_sequence"], "transcript": r.attempt["target_transcript"],
+                "verdict": r.verdict, "model": r.served_model, "fell_back": r.fell_back,
+            }
+            for r in campaign.records if r.attempt is not None
+        ]
+        return ExecutionOutcome(exploits=exploits, spend_usd=campaign.total_cost.get("usd", 0.0), attempts=attempts)
 
     return _run
 
