@@ -269,8 +269,10 @@ feed outcomes back → re-score); regression suite re-runs on target change.
       regression 93 replays/s, observability 10k records ≈30–60 ms; live latency target
       p50 11.8 s + Judge ~8 s. 100-case load test → **bottleneck = sequential external
       I/O** (our code is 0.014% of wall time); fix = concurrency (~8×) + Judge-gating.
-- [ ] Demo video (3–5 min) showing live attacks against the target.
-- [ ] Social post tagging @GauntletAI (final only).
+- [~] Demo video (3–5 min) — shot-by-shot script + storyboard in `DEMO_SCRIPT.md` (mapped
+      to the live console panels + CLIs); recording is the operator's to capture.
+- [~] Social post tagging @GauntletAI — X + LinkedIn drafts in `DEMO_SCRIPT.md`; posting
+      is the operator's to publish (final only).
 
 **Exit / final gate:** full multi-agent loop running live; all submission artifacts present.
 
