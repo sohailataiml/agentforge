@@ -33,6 +33,12 @@ from agentforge.eval_case import load_all_cases
 from agentforge.eval_runner import run_suite, write_results_jsonl
 from agentforge.judge import JUDGE_MODEL
 from agentforge.red_team import build_directive, run_directive
+from agentforge.regression import (
+    connect as regression_connect,
+    register_from_cases,
+    run_regression,
+    to_campaign_result,
+)
 from agentforge.red_team_client import RED_TEAM_MODEL, RedTeamError, red_team_configured
 from agentforge.rubrics import CATEGORIES
 from agentforge.target_adapter import TARGET_BASE_URL
@@ -77,6 +83,13 @@ def _prepared(directive_id: str) -> dict[str, Any] | None:
 # One run at a time — an in-memory job the frontend polls.
 _RUN_LOCK = threading.Lock()
 _RUN_STATE: dict[str, Any] = {"status": "idle", "started_at": None, "finished_at": None, "summary": None, "error": None}
+
+# The regression harness is a separate background job (deterministic replay).
+_REGRESSION_LOCK = threading.Lock()
+_REGRESSION_STATE: dict[str, Any] = {
+    "status": "idle", "started_at": None, "finished_at": None,
+    "summary": None, "outcomes": None, "campaign": None, "error": None,
+}
 
 
 def _require_token(token: str | None) -> None:
@@ -139,6 +152,17 @@ def _redteam_panel() -> str:
         f'<button id="rt-go" onclick="redTeam()" {disabled}>Generate &amp; attack</button>'
         '<span id="rt-status" class="muted"></span></div>'
         '<div id="rt-out"></div></div>'
+    )
+
+
+def _regression_panel() -> str:
+    return (
+        '<div class="rt"><h2 class="sec">Regression Harness — replay confirmed exploits '
+        '<span class="hint">deterministic · no LLM · asserts the violated invariant, not a string</span></h2>'
+        '<div class="rt-controls">'
+        '<button id="reg-go" onclick="runRegression()">Run regression</button>'
+        '<span id="reg-status" class="muted"></span></div>'
+        '<div id="reg-out"></div></div>'
     )
 
 
@@ -326,9 +350,61 @@ def red_team(category: str = "prompt_injection", hostile: bool = False, directiv
     })
 
 
+def _do_regression() -> None:
+    try:
+        conn = regression_connect()  # persistent corpus under evals/results/ (git-ignored)
+        try:
+            register_from_cases(conn, load_all_cases(_cases_dir()))
+            summary = run_regression(conn)  # deterministic replay, no Judge, no LLM on our side
+            # enrich each outcome with severity + invariant from the corpus for display
+            meta = {r["case_id"]: dict(r) for r in conn.execute("SELECT case_id, severity, invariant FROM exploits")}
+            outcomes = [
+                {
+                    "case_id": o.case_id, "category": o.category, "baseline": o.baseline, "result": o.result,
+                    "status": o.status, "reappeared": o.reappeared, "invariant_violated": o.invariant_violated,
+                    "severity": meta.get(o.case_id, {}).get("severity", ""),
+                    "invariant": meta.get(o.case_id, {}).get("invariant", ""),
+                }
+                for o in summary.outcomes
+            ]
+        finally:
+            conn.close()
+        _REGRESSION_STATE.update(
+            status="done", finished_at=datetime.now(timezone.utc).isoformat(),
+            outcomes=outcomes, campaign=to_campaign_result(summary),
+            summary={
+                "checked": summary.checked, "reproduces": summary._count("reproduces"),
+                "regressed": summary._count("regressed"), "fixed": summary._count("fixed"),
+                "stable": summary._count("stable"), "alerts": len(summary.alerts),
+                "target_version": summary.target_version, "cost": summary.cost,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 — surface any replay failure to the UI
+        _REGRESSION_STATE.update(status="error", finished_at=datetime.now(timezone.utc).isoformat(), error=str(exc))
+    finally:
+        _REGRESSION_LOCK.release()
+
+
+@app.get("/api/regression/status")
+def regression_status() -> JSONResponse:
+    return JSONResponse(_REGRESSION_STATE)
+
+
+@app.post("/api/regression")
+def start_regression(x_console_token: str | None = Header(default=None)) -> JSONResponse:
+    _require_token(x_console_token)
+    if not _REGRESSION_LOCK.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="a regression run is already in progress")
+    _REGRESSION_STATE.update(status="running", started_at=datetime.now(timezone.utc).isoformat(),
+                             finished_at=None, summary=None, outcomes=None, campaign=None, error=None)
+    threading.Thread(target=_do_regression, daemon=True).start()
+    return JSONResponse({"status": "running"})
+
+
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
-    return _PAGE.replace("{{CSS}}", DASH_CSS).replace("{{BODY}}", _console_body()).replace("{{RT}}", _redteam_panel())
+    return (_PAGE.replace("{{CSS}}", DASH_CSS).replace("{{BODY}}", _console_body())
+            .replace("{{REG}}", _regression_panel()).replace("{{RT}}", _redteam_panel()))
 
 
 _PAGE = """<!doctype html>
@@ -374,6 +450,12 @@ details.cases td, details.cases th { text-align:left; padding:6px 8px; border-bo
 details.cases th { color:var(--faint); font-size:11px; text-transform:uppercase; letter-spacing:.6px; }
 details.cases .inv { color:var(--muted); }
 #rt-out pre { margin:6px 0 0; white-space:pre-wrap; word-break:break-word; font-size:12.5px; color:#c7cede; }
+.reg-table { width:100%; border-collapse:collapse; margin-top:12px; font-size:12.5px; }
+.reg-table td, .reg-table th { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+.reg-table th { color:var(--faint); font-size:11px; text-transform:uppercase; letter-spacing:.6px; }
+.reg-table tr.alert td { background:#1a0f0e; }
+.reg-table .inv { color:var(--muted); max-width:360px; }
+.reg-json { margin:10px 0 0; white-space:pre-wrap; word-break:break-word; font-size:12px; color:#c7cede; background:var(--panel-2); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
 .warn-note { color:var(--surprise); font-size:12.5px; margin-bottom:10px; }
 .spin { display:inline-block; width:12px; height:12px; border:2px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:spin .7s linear infinite; vertical-align:middle; }
 @keyframes spin { to { transform:rotate(360deg); } }
@@ -396,6 +478,7 @@ details.cases .inv { color:var(--muted); }
 <details class="cases"><summary>Suite directives / cases (<span id="suite-count">…</span>) — what the attack suite exercises</summary><div id="suite-cases"></div></details>
 
 <div id="console-body">{{BODY}}</div>
+{{REG}}
 {{RT}}
 
 <footer>AgentForge operator console — synthetic demo patients; paid actions gated by operator token.</footer>
@@ -552,6 +635,72 @@ async function loadCases() {
     document.getElementById('suite-cases').innerHTML =
       `<table><thead><tr><th>case</th><th>category</th><th>subcategory</th><th>type</th><th>severity</th><th>expected</th><th>invariant</th></tr></thead><tbody>${rows}</tbody></table>`;
   } catch (e) { document.getElementById('suite-cases').textContent = 'failed to load cases'; }
+}
+
+// --- Regression Harness -------------------------------------------------
+const REG_META = {
+  regressed:  ['bad',  'REGRESSED'],
+  reproduces: ['bad',  'reproduces'],
+  fixed:      ['ok',   'fixed'],
+  stable:     ['ok',   'stable'],
+  error:      ['warn', 'error'],
+};
+function regRank(o) {
+  if (o.status === 'regressed') return 4;
+  if (o.reappeared) return 3;
+  if (o.status === 'reproduces') return 2;
+  if (o.status === 'fixed') return 1;
+  return 0;
+}
+function tile(n, label, cls) { return `<div class="tile ${cls||''}"><div class="n">${esc(n)}</div><div class="l">${esc(label)}</div></div>`; }
+
+async function runRegression() {
+  const btn = document.getElementById('reg-go'), status = document.getElementById('reg-status');
+  btn.disabled = true;
+  const r = await fetch('/api/regression', {method:'POST', headers: authHeaders()});
+  if (r.status === 401) { status.textContent = 'operator token required/invalid'; btn.disabled=false; return; }
+  if (r.status === 409) { status.textContent = 'a regression run is already in progress'; btn.disabled=false; return; }
+  if (!r.ok) { const d = await r.json().catch(()=>({})); status.textContent = 'error: ' + (d.detail||'failed'); btn.disabled=false; return; }
+  status.innerHTML = '<span class="spin"></span> replaying the exploit corpus against the live target…';
+  pollRegression(btn, status);
+}
+
+async function pollRegression(btn, status) {
+  const s = await (await fetch('/api/regression/status')).json();
+  if (s.status === 'running') { setTimeout(() => pollRegression(btn, status), 2000); return; }
+  btn.disabled = false;
+  if (s.status === 'error') { status.textContent = 'regression error: ' + s.error; return; }
+  renderRegression(s, status);
+}
+
+function renderRegression(s, status) {
+  const sum = s.summary || {}, out = document.getElementById('reg-out');
+  status.textContent = `done — ${sum.checked} replayed · ${sum.reproduces} reproduce · ${sum.alerts} alert(s)`;
+  const tiles = '<div class="tiles">'
+    + tile(sum.checked, 'exploits replayed')
+    + tile(sum.reproduces, 'still reproduce', sum.reproduces ? 'bad' : 'ok')
+    + tile(sum.alerts, 'alerts', sum.alerts ? 'bad' : 'ok')
+    + tile(sum.fixed, 'fixed', sum.fixed ? 'ok' : '')
+    + tile('$' + ((sum.cost && sum.cost.usd) || 0).toFixed(4), 'target cost')
+    + tile(sum.target_version || '?', 'target version')
+    + '</div>';
+  const rows = (s.outcomes || []).slice().sort((a, b) => regRank(b) - regRank(a)).map(o => {
+    const [cls, label] = REG_META[o.status] || ['warn', o.status];
+    const badge = (o.reappeared && o.status !== 'regressed') ? ' <span class="chip bad">reappeared</span>' : '';
+    const alertRow = (o.status === 'regressed' || o.reappeared) ? ' class="alert"' : '';
+    return `<tr${alertRow}>
+      <td class="mono">${esc(o.case_id)}</td>
+      <td>${esc(o.category)}</td>
+      <td>${esc(o.severity || '')}</td>
+      <td>${esc(o.baseline)} \\u2192 <b>${esc(o.result)}</b></td>
+      <td><span class="chip ${cls}">${esc(label)}</span>${badge}</td>
+      <td class="inv">${esc(o.invariant || '')}</td></tr>`;
+  }).join('');
+  out.innerHTML = tiles
+    + `<table class="reg-table"><thead><tr><th>exploit</th><th>category</th><th>severity</th>`
+    + `<th>baseline \\u2192 replay</th><th>status</th><th>invariant asserted</th></tr></thead><tbody>${rows}</tbody></table>`
+    + `<details class="cases"><summary>CampaignResult (contract emitted to the Orchestrator)</summary>`
+    + `<pre class="reg-json">${esc(JSON.stringify(s.campaign || {}, null, 2))}</pre></details>`;
 }
 
 loadConfig(); loadDirectives(); loadCases();

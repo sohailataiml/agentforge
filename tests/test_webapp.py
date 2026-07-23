@@ -28,6 +28,11 @@ def test_index_renders_console(client: TestClient):
     assert resp.status_code == 200
     assert "AgentForge" in resp.text
     assert "Run attack suite" in resp.text
+    assert "Run regression" in resp.text  # regression harness panel wired in
+
+
+def test_regression_status_starts_idle(client: TestClient):
+    assert client.get("/api/regression/status").json()["status"] in {"idle", "running", "done", "error"}
 
 
 def test_config_reports_capabilities(client: TestClient):
@@ -131,6 +136,7 @@ def test_actions_require_token_when_set(client: TestClient, monkeypatch):
     assert client.post("/api/run").status_code == 401
     assert client.post("/api/run", headers={"X-Console-Token": "wrong"}).status_code == 401
     assert client.post("/api/redteam").status_code == 401
+    assert client.post("/api/regression").status_code == 401  # deterministic but still hits the target
 
 
 def test_redteam_without_key_is_clear_error(client: TestClient, monkeypatch):
